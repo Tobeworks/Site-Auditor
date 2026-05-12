@@ -1,0 +1,9 @@
+.venv/
+reports/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.site-auditor.yml
+.env
+.DS_Store
