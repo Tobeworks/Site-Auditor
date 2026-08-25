@@ -1,38 +1,37 @@
 import time
 import concurrent.futures
+from typing import Callable
 import httpx
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from auditor.checks import (
     wordpress, wordpress_deep, seo, security, performance,
-    broken_links, a11y, structured_data, legal, tech_stack,
+    broken_links, a11y, structured_data, markup, legal, tech_stack,
     social, hosting, dns, content_quality,
 )
 
-console = Console()
-
-MODULES = [
-    "wordpress", "seo", "security", "performance", "broken_links",
-    "a11y", "structured_data", "legal", "tech_stack", "social", "content_quality",
-]
+OnProgress = Callable[[str, str], None]
 
 
-def run_audit(url: str, skip: list[str] = None) -> dict:
+def run_audit(url: str, skip: list[str] | None = None, on_progress: OnProgress | None = None) -> dict:
     skip = [s.lower() for s in (skip or [])]
     results = {}
 
-    console.print(f"\n[bold cyan]Site Auditor[/bold cyan] → [white]{url}[/white]\n")
+    def notify(name: str, message: str):
+        if on_progress:
+            on_progress(name, message)
 
-    # Load page
-    with console.status("[bold]Seite wird geladen...[/bold]"):
-        html, resp_headers, response_time_ms = _fetch(url)
+    notify("start", url)
+
+    html, resp_headers, response_time_ms = _fetch(url)
 
     if html is None:
-        console.print("[red]Fehler: Seite konnte nicht geladen werden.[/red]")
+        notify("error", "Seite konnte nicht geladen werden.")
         return {}
+
+    if resp_headers.get("_fallback_used"):
+        notify("warning", "HTTPS nicht verfügbar, weiter mit HTTP")
 
     soup = BeautifulSoup(html, "lxml")
 
@@ -41,55 +40,50 @@ def run_audit(url: str, skip: list[str] = None) -> dict:
     resp_headers["_http_version"] = "HTTP/2" if "HTTP/2" in resp_headers.get("_raw_version", "") else "HTTP/1.1"
 
     # WordPress detection first
-    console.print("[dim]→ WordPress-Erkennung[/dim]")
+    notify("wordpress", "WordPress-Erkennung")
     wp_result = wordpress.run(url, html, soup, resp_headers)
     results["wordpress"] = wp_result
 
-    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+    # hosting + dns in parallel (no HTML needed)
+    if "hosting" not in skip:
+        notify("hosting", "Hosting & DNS analysieren...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            f_hosting = ex.submit(hosting.run, url, "", None, resp_headers)
+            f_dns = ex.submit(dns.run, url, "", None, resp_headers)
+            results["hosting"] = f_hosting.result()
+            results["dns"] = f_dns.result()
 
-        # hosting + dns in parallel (no HTML needed)
-        if "hosting" not in skip:
-            task = progress.add_task("Hosting & DNS analysieren...", total=None)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-                f_hosting = ex.submit(hosting.run, url, "", None, resp_headers)
-                f_dns = ex.submit(dns.run, url, "", None, resp_headers)
-                results["hosting"] = f_hosting.result()
-                results["dns"] = f_dns.result()
-            progress.remove_task(task)
+    # WordPress deep (conditional)
+    if wp_result.get("is_wordpress") and "wordpress_deep" not in skip:
+        notify("wordpress_deep", "WordPress-Sicherheitscheck...")
+        results["wordpress_deep"] = wordpress_deep.run(url, html, soup, resp_headers)
 
-        # WordPress deep (conditional)
-        if wp_result.get("is_wordpress") and "wordpress_deep" not in skip:
-            task = progress.add_task("WordPress-Sicherheitscheck...", total=None)
-            results["wordpress_deep"] = wordpress_deep.run(url, html, soup, resp_headers)
-            progress.remove_task(task)
+    # Sequential modules
+    sequential = [
+        ("seo", seo, "SEO analysieren..."),
+        ("security", security, "Security-Headers prüfen..."),
+        ("performance", performance, "Performance analysieren..."),
+        ("broken_links", broken_links, "Links prüfen..."),
+        ("structured_data", structured_data, "Strukturierte Daten prüfen..."),
+        ("markup", markup, "HTML-Markup validieren..."),
+        ("legal", legal, "Rechtliche Checks..."),
+        ("tech_stack", tech_stack, "Tech-Stack erkennen..."),
+        ("social", social, "Social & Crawlability prüfen..."),
+        ("content_quality", content_quality, "Content-Qualität prüfen..."),
+    ]
 
-        # Sequential modules
-        sequential = [
-            ("seo", seo, "SEO analysieren..."),
-            ("security", security, "Security-Headers prüfen..."),
-            ("performance", performance, "Performance analysieren..."),
-            ("broken_links", broken_links, "Links prüfen..."),
-            ("structured_data", structured_data, "Strukturierte Daten prüfen..."),
-            ("legal", legal, "Rechtliche Checks..."),
-            ("tech_stack", tech_stack, "Tech-Stack erkennen..."),
-            ("social", social, "Social & Crawlability prüfen..."),
-            ("content_quality", content_quality, "Content-Qualität prüfen..."),
-        ]
+    for name, module, label in sequential:
+        if name in skip:
+            continue
+        notify(name, label)
+        results[name] = module.run(url, html, soup, resp_headers)
 
-        for name, module, label in sequential:
-            if name in skip:
-                continue
-            task = progress.add_task(label, total=None)
-            results[name] = module.run(url, html, soup, resp_headers)
-            progress.remove_task(task)
+    # a11y last (Playwright)
+    if "a11y" not in skip:
+        notify("a11y", "Barrierefreiheit prüfen (Playwright)...")
+        results["a11y"] = a11y.run(url, html, soup, resp_headers)
 
-        # a11y last (Playwright)
-        if "a11y" not in skip:
-            task = progress.add_task("Barrierefreiheit prüfen (Playwright)...", total=None)
-            results["a11y"] = a11y.run(url, html, soup, resp_headers)
-            progress.remove_task(task)
-
-    console.print("\n[bold green]✓ Analyse abgeschlossen[/bold green]\n")
+    notify("done", "Analyse abgeschlossen")
     return results
 
 
@@ -112,8 +106,7 @@ def _fetch(url: str) -> tuple[str | None, dict, int]:
                     h = dict(r.headers)
                     h["_response_time_ms"] = elapsed
                     h["_raw_version"] = str(r.http_version)
-                    if candidate != url:
-                        console.print(f"[yellow]⚠ HTTPS nicht verfügbar, weiter mit HTTP ({candidate})[/yellow]")
+                    h["_fallback_used"] = candidate != url
                     return r.text, h, elapsed
             except (httpx.ConnectError, httpx.TimeoutException):
                 if attempt == 1:

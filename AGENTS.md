@@ -1,38 +1,49 @@
 # AGENTS.md - Site Auditor
 
-Vollständige Spezifikation für den autonomen Aufbau des `site-auditor` Python-Tools.
+Full specification for the `site-auditor` Python tool — usable as a CLI and as an importable library.
 
 ---
 
-## Ziel
+## Goal
 
-CLI-Tool das eine URL entgegennimmt, eine vollständige Website-Analyse durchführt und einen strukturierten Markdown-Report ausgibt. Primär für WordPress-Seiten konzipiert, funktioniert aber für beliebige URLs.
+A tool that takes a URL, runs a comprehensive website analysis, and produces a structured report (Markdown, HTML, or JSON). Usable two ways:
+
+1. **CLI**: `site-auditor https://tobeworks.de` — for interactive use and scripted report generation.
+2. **Library**: `from auditor import run_audit` — for embedding in another Python project (a backend service, a scheduled job, a Flask/FastAPI endpoint, ...).
+
+Built primarily for WordPress sites, but works on any URL.
 
 ---
 
 ## Stack
 
 - Python 3.11+
-- `httpx` für HTTP-Requests (inkl. `AsyncClient` für parallele Link-Checks)
-- `beautifulsoup4` für HTML-Parsing
-- `playwright` für a11y (axe-core) und optional Performance
-- `rich` für Terminal-Output während der Analyse
-- `dnspython` für DNS-Abfragen
-- `ipwhois` für ASN/Hosting-Provider-Lookup
-- Lighthouse CLI (extern, optional): `npm install -g lighthouse`
+- [uv](https://docs.astral.sh/uv/) — project, dependency, and packaging manager (replaces `pip` + `requirements.txt` + manual venvs)
+- `httpx` for HTTP requests (incl. `AsyncClient` for parallel link checks)
+- `beautifulsoup4` + `lxml` for HTML parsing
+- `playwright` for a11y (axe-core) and optional performance metrics
+- `dnspython` for DNS lookups
+- `ipwhois` for ASN/hosting-provider lookup
+- Lighthouse CLI (external, optional): `npm install -g lighthouse`
+- `rich` (**optional**, `cli` extra) — terminal output for the CLI only, never imported by the core library
+- `anthropic` (**optional**, `ai` extra) — the plain-language AI summary feature only
+
+The core (`auditor.run_audit`, `auditor.build_report`) has **no** dependency on `rich` or `anthropic` — a pure-library install (`uv add site-auditor` without extras) never imports either.
 
 ---
 
-## Projektstruktur
+## Project Structure
 
 ```
 site-auditor/
 ├── auditor/
-│   ├── __init__.py
-│   ├── runner.py
-│   ├── report.py
+│   ├── __init__.py        # public library API: run_audit, build_report, __version__
+│   ├── cli.py              # argparse + Rich console — the `site-auditor` CLI entry point
+│   ├── runner.py            # run_audit() — orchestrates all checks, zero console output
+│   ├── report.py             # build()/save() — renders results into md/html/json
+│   ├── summary.py             # optional AI plain-language summary (needs `ai` extra)
 │   └── checks/
-│       ├── __init__.py
+│       ├── __init__.py         # ALL_CHECKS — single source of truth for available check names
 │       ├── wordpress.py
 │       ├── wordpress_deep.py
 │       ├── seo.py
@@ -41,46 +52,51 @@ site-auditor/
 │       ├── broken_links.py
 │       ├── a11y.py
 │       ├── structured_data.py
+│       ├── markup.py           # W3C Nu Html Checker validation
 │       ├── legal.py
 │       ├── tech_stack.py
 │       ├── social.py
 │       ├── hosting.py
 │       ├── dns.py
 │       └── content_quality.py
-├── main.py
-└── requirements.txt
+├── main.py                 # legacy entry point: `python main.py <url>`, delegates to auditor.cli
+├── test_markup.py            # assert-based smoke test for checks/markup.py
+├── test_runner_silent.py       # assert-based smoke test for runner.run_audit()
+└── pyproject.toml
 ```
 
 ---
 
-## CLI-Interface
+## CLI Interface
 
-```
-python main.py https://example.com
-python main.py https://example.com --output ./reports
-python main.py https://example.com --skip broken_links
-python main.py https://example.com --skip broken_links,a11y
-python main.py https://example.com --format md
-python main.py https://example.com --format json
-python main.py https://example.com --format html
-python main.py https://example.com --summary
-python main.py --list-checks
-python main.py --version
+```bash
+uv run site-auditor https://tobeworks.de
+uv run site-auditor https://tobeworks.de --output ./reports
+uv run site-auditor https://tobeworks.de --skip broken_links
+uv run site-auditor https://tobeworks.de --skip broken_links,a11y
+uv run site-auditor https://tobeworks.de --format md
+uv run site-auditor https://tobeworks.de --format json
+uv run site-auditor https://tobeworks.de --format html
+uv run site-auditor https://tobeworks.de --summary
+uv run site-auditor --list-checks
+uv run site-auditor --version
 ```
 
-Argumente:
+Once installed globally (`uv tool install .`), drop the `uv run` prefix: `site-auditor https://tobeworks.de`. `python main.py <url>` still works as a legacy alias.
+
+Arguments:
 
 - `url` (positional, required)
 - `--output` (optional, default: `./reports`)
-- `--skip` (optional, kommaseparierte Modul-Namen)
-- `--format` (optional, default: `md`, Optionen: `md`, `json`, `html`)
-- `--summary` (optional, generiert zusätzlich eine KI-Zusammenfassung in Laiensprache)
-- `--list-checks` (optional, listet alle verfügbaren Module und beendet)
-- `--version` (optional, gibt Tool-Version aus und beendet)
+- `--skip` (optional, comma-separated module names)
+- `--format` (optional, default: `md`, options: `md`, `json`, `html`)
+- `--summary` (optional, additionally generates a plain-language AI summary; requires the `ai` extra + `ANTHROPIC_API_KEY`)
+- `--list-checks` (optional, lists all available modules and exits)
+- `--version` (optional, prints the tool version and exits)
 
-**Config-File:**
+**Config file:**
 
-Optionaler YAML-Config-File unter `~/.site-auditor.yml` oder `./.site-auditor.yml` (lokale Datei hat Vorrang). Unterstützte Felder:
+Optional YAML config file at `~/.site-auditor.yml` or `./.site-auditor.yml` (local file takes precedence). Supported fields:
 
 ```yaml
 output: ./reports
@@ -88,118 +104,216 @@ format: md
 skip: []
 wpscan_api_key: "..."
 shodan_api_key: "..."
+anthropic_api_key: "..."
 ```
 
-ENV-Variablen überschreiben Config-File. CLI-Flags überschreiben alles.
+Env vars override the config file. CLI flags override everything.
 
 ---
 
-## Allgemeines Muster aller Check-Module
+## Library Interface
 
-Jedes Modul exportiert eine Funktion:
+Public API, exported from `auditor/__init__.py`:
+
+```python
+from auditor import run_audit, build_report, __version__
+```
+
+### `run_audit(url, skip=None, on_progress=None) -> dict`
+
+Synchronous, blocking. Runs the full check pipeline and returns a `dict` keyed by check name (`{"seo": {...}, "security": {...}, ...}`). Never prints to the console.
+
+- `url: str` — target URL (scheme auto-prefixed with `https://` if missing is the CLI's job, not the library's — pass a full URL here)
+- `skip: list[str] | None` — check names to skip (see `auditor.checks.ALL_CHECKS` for the full list)
+- `on_progress: Callable[[str, str], None] | None` — optional callback, invoked as `on_progress(event_name, message)` at each pipeline stage (`"start"`, a check name, `"warning"`, `"error"`, `"done"`). Omit it entirely for silent library use.
+
+```python
+from auditor import run_audit
+
+results = run_audit("https://tobeworks.de", skip=["a11y", "broken_links"])
+```
+
+With progress logging instead of Rich console output:
+
+```python
+import logging
+log = logging.getLogger("audit")
+
+results = run_audit(
+    "https://tobeworks.de",
+    on_progress=lambda name, message: log.info("[%s] %s", name, message),
+)
+```
+
+### `build_report(url, results, ai_summary=None, fmt="md") -> str`
+
+Renders a `run_audit()` result dict into a report string. `fmt` is one of `"md"`, `"json"`, `"html"`.
+
+```python
+from auditor import run_audit, build_report
+
+results = run_audit("https://tobeworks.de")
+report_json = build_report("https://tobeworks.de", results, fmt="json")
+```
+
+### Embedding in a web framework
+
+`run_audit()` is **synchronous and blocking** (sync `httpx.Client`, sync Playwright wrapper via `asyncio.run()` internally for the a11y check). A full audit with all checks and Playwright can take 20-60s+.
+
+**Flask** (sync views — call directly):
+
+```python
+from flask import Flask, jsonify, request
+from auditor import run_audit
+
+app = Flask(__name__)
+
+
+@app.post("/audit")
+def audit():
+    url = request.json["url"]
+    results = run_audit(url, skip=["a11y", "broken_links"])
+    return jsonify(results)
+```
+
+**FastAPI** (async — offload to a thread so the event loop isn't blocked):
+
+```python
+import asyncio
+from fastapi import FastAPI
+from pydantic import BaseModel
+from auditor import run_audit
+
+app = FastAPI()
+
+
+class AuditRequest(BaseModel):
+    url: str
+    skip: list[str] = []
+
+
+@app.post("/audit")
+async def audit(req: AuditRequest):
+    results = await asyncio.to_thread(run_audit, req.url, req.skip)
+    return results
+```
+
+For production web use, prefer a background task queue (Celery, RQ, arq, FastAPI `BackgroundTasks`) over holding the HTTP request open for the full audit duration.
+
+---
+
+## Common pattern for all check modules
+
+Every module exports a function:
 
 ```python
 def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict
 ```
 
-Bei Exception gibt jedes Modul zurück:
+On exception, every module returns:
 
 ```python
-{"error": "Fehlermeldung als String"}
+{"error": "error message as string"}
 ```
 
-Kein Check darf den gesamten Runner zum Absturz bringen.
+No check may crash the whole runner.
 
 ---
 
 ## runner.py
 
-1. Seite einmal laden via `httpx` (User-Agent: `Mozilla/5.0` setzen, Timeout 15s, max. 2 Retries bei Netzwerkfehler oder 5xx)
-2. HTML und Headers an alle Module weitergeben
-3. `wordpress.py` zuerst ausführen
-4. Wenn `is_wordpress: True`, dann `wordpress_deep.py` zusätzlich ausführen
-5. `hosting.py` und `dns.py` parallel ausführen (brauchen kein HTML, nur die Domain)
-6. Alle anderen Module sequenziell ausführen
-7. Playwright nur für `a11y.py` starten, danach schließen
-8. Lighthouse-Subprocess nur für `performance.py` wenn Lighthouse verfügbar
-9. Alle Ergebnisse als dict an `report.py` übergeben
+1. Load the page once via `httpx` (User-Agent: `Mozilla/5.0`, timeout 15s, up to 2 retries on network error or 5xx)
+2. Pass HTML and headers to every module
+3. Run `wordpress.py` first
+4. If `is_wordpress: True`, also run `wordpress_deep.py`
+5. Run `hosting.py` and `dns.py` in parallel (need no HTML, just the domain)
+6. Run all other modules sequentially
+7. Start Playwright only for `a11y.py`, close it afterward
+8. Start the Lighthouse subprocess only for `performance.py`, if Lighthouse is available
+9. Pass all results as a dict to `report.py`
+
+`run_audit()` takes an optional `on_progress(name: str, message: str)` callback and fires it at each of the steps above — it never prints directly (see **Library Interface**). `auditor/cli.py` is the only place a Rich `Progress` spinner is wired up.
 
 ---
 
 ## report.py
 
-- Dateiname: `audit_[domain]_[YYYYMMDD].md` (bzw. `.json` oder `.html` je nach `--format`)
-- Speicherort: `--output`-Pfad, default `./reports/`
-- Sektionen in dieser Reihenfolge:
+- Filename: `audit_[domain]_[YYYYMMDD].md` (or `.json`/`.html` depending on `--format`)
+- Location: `--output` path, default `./reports/`
+- Sections in this order:
 
 ```
 # Site Audit: [URL]
-Erstellt: [ISO-Datum]
+Erstellt: [ISO date]
 
 ## Executive Summary
-[Ampel-Tabelle aller Module]
+[Traffic-light table of all modules]
 
 ## Kritische Issues
-[Alle Issues aller Module nach Schweregrad sortiert, modulübergreifend]
+[All issues across all modules, sorted by severity, cross-module]
 
-## Hosting & Server
-## DNS
-## Security
-## WordPress
-## WordPress Details (nur wenn WordPress erkannt)
 ## SEO
+## Content & Struktur
 ## Structured Data
+## HTML Markup
+## Social & Crawlability
 ## Performance
+## Security
 ## Broken Links
+## WordPress
+## WordPress Details (only if WordPress detected)
 ## Accessibility
 ## Legal
+## Hosting & Server
+## DNS
 ## Tech Stack
-## Social & Crawlability
-## Content & Struktur
 
 ---
 *Generiert mit site-auditor*
 *Dieser Report ersetzt keine rechtliche oder sicherheitstechnische Fachprüfung.*
 ```
 
-Executive Summary als Markdown-Tabelle mit allen Modulen in Report-Reihenfolge:
+Each section renders exactly once, in the order given by `module_order` in `report.py` — that list is the single source of truth for both the Executive Summary table and the section order (**do not duplicate a section's rendering code** — a past version of this file had every section appearing twice plus a `hosting`/`dns` key mix-up; that was found and fixed while building the `markup` check, see git history).
+
+Executive Summary as a Markdown table with all modules in report order:
 
 | Modul | Status | Issues |
 |---|---|---|
-| Hosting & Server | ⚠️ | 1 |
-| DNS | 🔴 | 3 |
+| SEO | ⚠️ | 2 |
+| Content & Struktur | ✅ | 0 |
+| Structured Data | ⚠️ | 1 |
+| HTML Markup | 🔴 | 4 |
+| Social & Crawlability | ⚠️ | 1 |
+| Performance | ⚠️ | 3 |
 | Security | 🔴 | 5 |
+| Broken Links | ✅ | 0 |
 | WordPress | ✅ | 0 |
 | WordPress Details | 🔴 | 4 |
-| SEO | ⚠️ | 2 |
-| Structured Data | ⚠️ | 1 |
-| Performance | ⚠️ | 3 |
-| Broken Links | ✅ | 0 |
 | Accessibility | 🔴 | 8 |
 | Legal | ⚠️ | 2 |
+| Hosting & Server | ⚠️ | 1 |
+| DNS | 🔴 | 3 |
 | Tech Stack | ✅ | 0 |
-| Social & Crawlability | ⚠️ | 1 |
-| Content & Struktur | ✅ | 0 |
 
-**Sektion-Format pro Modul:**
+**Per-module section format:**
 
-Jede Sektion beginnt mit einer kompakten Übersicht der wichtigsten Kennzahlen als Tabelle oder Liste, danach Issues als `⚠️`- oder `🔴`-Liste, positive Befunde als `✅`-Liste. Keine leeren Sektionen, bei Modul-Error Sektion mit `⚪ Fehler: [Meldung]` ausgeben.
+Each section starts with a compact overview of the key metrics as a table or list, followed by issues as a `⚠️`/`🔴` list, positive findings as a `✅` list. No empty sections; on module error, render `⚪ Fehler: [message]`.
 
-Ampel-Logik: 0 Issues = ✅, 1-2 = ⚠️, 3+ Issues oder mindestens 1 Critical = 🔴, Modul-Error = ⚪
+Traffic-light logic: 0 issues = ✅, 1-2 = ⚠️, 3+ issues or at least 1 critical = 🔴, module error = ⚪
 
 ---
 
-## Modul-Specs
+## Module specs
 
 ### wordpress.py
 
-Erkennung via:
+Detection via:
 
-- `/wp-content/` oder `/wp-includes/` im HTML
-- `<meta name="generator" content="WordPress ...">` für Version
-- CSS-Asset-Pfade für Theme-Name
-- Asset-Pfade für Plugin-Slugs
-- `x-powered-by`-Header
+- `/wp-content/` or `/wp-includes/` in the HTML
+- `<meta name="generator" content="WordPress ...">` for the version
+- CSS asset paths for the theme name
+- Asset paths for plugin slugs
+- `x-powered-by` header
 
 Output:
 
@@ -216,36 +330,36 @@ Output:
 
 ### wordpress_deep.py
 
-Nur ausführen wenn `wordpress.py` `is_wordpress: True` zurückgibt.
+Only runs when `wordpress.py` returns `is_wordpress: True`.
 
-HEAD-Requests auf:
+HEAD requests to:
 
-- `/wp-login.php` - 200 = exposed
-- `/xmlrpc.php` - 200 oder 405 = Problem
-- `/readme.html` - 200 = Version-Leakage
-- `/license.txt` - 200 = Version-Leakage
-- `/wp-content/debug.log` - 200 = kritisch
-- `/wp-cron.php` - 200 = direkt erreichbar
+- `/wp-login.php` — 200 = exposed
+- `/xmlrpc.php` — 200 or 405 = issue
+- `/readme.html` — 200 = version leakage
+- `/license.txt` — 200 = version leakage
+- `/wp-content/debug.log` — 200 = critical
+- `/wp-cron.php` — 200 = directly reachable
 
-GET-Request auf:
+GET request to:
 
-- `/wp-json/wp/v2/users` - wenn 200 und JSON mit Usernamen, User-Enumeration möglich, Usernamen extrahieren und melden
+- `/wp-json/wp/v2/users` — if 200 and JSON contains usernames, user enumeration is possible; extract and report the usernames
 
-WP-Version-Check:
+WP version check:
 
-- Erkannte Version gegen `api.wordpress.org/core/version-check/1.7/` prüfen
-- Vergleich: detected vs. latest
+- Compare the detected version against `api.wordpress.org/core/version-check/1.7/`
+- Compare detected vs. latest
 
-Plugin-Vulnerability-Check:
+Plugin vulnerability check:
 
-- Wenn Umgebungsvariable `WPSCAN_API_KEY` gesetzt: erkannte Plugin-Slugs gegen WPScan-API prüfen
-- Ohne Key: nur Auflistung der Slugs, Hinweis im Report dass Vuln-Check nicht durchgeführt wurde
+- If the `WPSCAN_API_KEY` env var is set: check detected plugin slugs against the WPScan API
+- Without a key: list slugs only, note in the report that the vuln check was skipped
 
-**WooCommerce-Erkennung:**
+**WooCommerce detection:**
 
-- Prüfen ob WooCommerce aktiv: `/wp-content/plugins/woocommerce/` in HTML-Assets oder `woocommerce`-Klassen im HTML
-- Wenn erkannt: HEAD-Request auf `/wp-json/wc/v3/` – wenn 200 ohne Auth = API öffentlich zugänglich (Critical)
-- WooCommerce-Version aus Asset-Pfaden extrahieren
+- Check whether WooCommerce is active: `/wp-content/plugins/woocommerce/` in HTML assets, or `woocommerce` classes in the HTML
+- If detected: HEAD request to `/wp-json/wc/v3/` — 200 without auth = API publicly accessible (critical)
+- Extract the WooCommerce version from asset paths
 
 Output:
 
@@ -274,20 +388,20 @@ Output:
 
 ### seo.py
 
-Prüft:
+Checks:
 
-- `<title>` und Länge (optimal: 50-60 Zeichen)
-- `<meta name="description">` und Länge (optimal: 120-160 Zeichen)
-- H1: Anzahl und Text. 0 = Issue, mehr als 1 = Issue
+- `<title>` and its length (optimal: 50-60 chars)
+- `<meta name="description">` and its length (optimal: 120-160 chars)
+- H1: count and text. 0 = issue, more than 1 = issue
 - Canonical URL via `<link rel="canonical">`
-- OG-Tags: `og:title`, `og:description`, `og:image`, `og:type`
-- OG-Image-Dimensionen: `og:image:width` / `og:image:height` prüfen, Empfehlung 1200×630px
+- OG tags: `og:title`, `og:description`, `og:image`, `og:type`
+- OG image dimensions: `og:image:width` / `og:image:height`, recommended 1200×630px
 - Twitter Cards: `twitter:card`, `twitter:title`, `twitter:description`, `twitter:image`
-- `<meta name="robots">` Inhalt
-- `lang`-Attribut auf `<html>`
-- Favicon: `<link rel="icon">` oder `<link rel="shortcut icon">` im `<head>`, Fallback HEAD-Request auf `/favicon.ico`
-- Apple Touch Icon: `<link rel="apple-touch-icon">`
-- Web App Manifest: `<link rel="manifest">` und HEAD-Request auf `/manifest.json`
+- `<meta name="robots">` content
+- `lang` attribute on `<html>`
+- Favicon: `<link rel="icon">` or `<link rel="shortcut icon">` in `<head>`, fallback HEAD request to `/favicon.ico`
+- Apple touch icon: `<link rel="apple-touch-icon">`
+- Web app manifest: `<link rel="manifest">` and HEAD request to `/manifest.json`
 
 Output:
 
@@ -323,40 +437,40 @@ Output:
 
 ### security.py
 
-**HTTP-Header-Checks:**
+**HTTP header checks:**
 
-Folgende Header prüfen und Fehlen als Issue markieren:
+Check the following headers, flag absence as an issue:
 
-- `Strict-Transport-Security`: `max-age` extrahieren, Minimum 31536000, `includeSubDomains` und `preload` als Bonus
+- `Strict-Transport-Security`: extract `max-age`, minimum 31536000, `includeSubDomains` and `preload` as bonus
 - `Content-Security-Policy`
 - `X-Frame-Options`
-- `X-Content-Type-Options`: Sollte `nosniff` sein
+- `X-Content-Type-Options`: should be `nosniff`
 - `Referrer-Policy`
 - `Permissions-Policy`
 
-**HTTPS-Checks:**
+**HTTPS checks:**
 
-- HTTP-URL anfragen, prüfen ob auf HTTPS redirected wird
-- Vollständige Redirect-Kette loggen (URL → URL → URL), nicht nur Hop-Anzahl
-- Mixed Content: `http://`-Referenzen in `src`, `href`, `action` auf externe Domains
+- Request the HTTP URL, check whether it redirects to HTTPS
+- Log the full redirect chain (URL → URL → URL), not just the hop count
+- Mixed content: `http://` references in `src`, `href`, `action` pointing to external domains
 
-**Zertifikat:**
+**Certificate:**
 
-- Via `ssl` + `socket` das Zertifikat abrufen
-- Ablaufdatum und Restlaufzeit in Tagen
-- Unter 30 Tage = Warning, abgelaufen = Critical
+- Fetch the certificate via `ssl` + `socket`
+- Expiry date and days remaining
+- Under 30 days = warning, expired = critical
 
-**Cookie Security Flags:**
+**Cookie security flags:**
 
-- Alle `Set-Cookie`-Header aus der Response auswerten
-- Pro Cookie prüfen: `Secure`-Flag vorhanden, `HttpOnly`-Flag vorhanden, `SameSite`-Attribut gesetzt
-- Fehlende Flags bei Cookies mit Session-relevanten Namen (z.B. `PHPSESSID`, `wordpress_logged_in`, `session`) als Critical markieren
+- Evaluate every `Set-Cookie` header in the response
+- Per cookie, check: `Secure` flag present, `HttpOnly` flag present, `SameSite` attribute set
+- Missing flags on session-relevant cookie names (e.g. `PHPSESSID`, `wordpress_logged_in`, `session`) = critical
 
 **Subresource Integrity (SRI):**
 
-- Alle `<script src="...">` und `<link rel="stylesheet" href="...">` die auf externe Domains verweisen sammeln
-- Prüfen ob `integrity`-Attribut vorhanden
-- Externe Ressourcen ohne `integrity` = Issue (Supply-Chain-Risiko)
+- Collect every `<script src="...">` and `<link rel="stylesheet" href="...">` pointing to external domains
+- Check for an `integrity` attribute
+- External resources without `integrity` = issue (supply-chain risk)
 
 Output:
 
@@ -391,11 +505,11 @@ Output:
 
 ### performance.py
 
-**Lighthouse (wenn verfügbar):**
+**Lighthouse (if available):**
 
-Prüfung via `shutil.which("lighthouse")`.
+Checked via `shutil.which("lighthouse")`.
 
-Aufruf:
+Invocation:
 
 ```python
 subprocess.run([
@@ -408,45 +522,45 @@ subprocess.run([
 ], capture_output=True)
 ```
 
-Extrahieren aus JSON: Performance-Score, LCP, CLS, FCP, TBT, TTFB, Speed Index, Top-3 Opportunities mit geschätzter Zeitersparnis.
+Extract from the JSON: performance score, LCP, CLS, FCP, TBT, TTFB, Speed Index, top 3 opportunities with estimated time savings.
 
-**Fallback ohne Lighthouse:**
+**Fallback without Lighthouse:**
 
-- Response-Zeit via httpx
-- HTML-Größe in KB
-- Anzahl `<script>`-Tags gesamt
-- `<script>` ohne `defer`/`async` im `<head>`
-- `<link rel="stylesheet">` ohne `media`-Attribut im `<head>`
+- Response time via httpx
+- HTML size in KB
+- Total `<script>` tag count
+- `<script>` without `defer`/`async` in `<head>`
+- `<link rel="stylesheet">` without a `media` attribute in `<head>`
 
-**Bildoptimierung (immer, kein Lighthouse nötig):**
+**Image optimization (always, no Lighthouse needed):**
 
-- `<img>` ohne `width`/`height`
-- `<img>` ohne `loading="lazy"` (außer erstes Bild)
-- Keine `<picture>`/`srcset`-Nutzung detektierbar
+- `<img>` without `width`/`height`
+- `<img>` without `loading="lazy"` (except the first image)
+- No detectable `<picture>`/`srcset` usage
 
-**Font-Loading:**
+**Font loading:**
 
-- Google Fonts via `<link>` statt `font-display: swap`
-- `@import` für Fonts in `<style>`-Tags
+- Google Fonts via `<link>` instead of `font-display: swap`
+- `@import` for fonts inside `<style>` tags
 
-**Compression & Protokoll:**
+**Compression & protocol:**
 
-- `Content-Encoding`-Header prüfen: `gzip` oder `br` (Brotli) = aktiv
-- Fehlende Komprimierung = Issue
-- HTTP-Protokoll-Version aus httpx-Response auslesen (`response.http_version`): HTTP/2 oder HTTP/1.1
+- Check the `Content-Encoding` header: `gzip` or `br` (Brotli) = active
+- Missing compression = issue
+- Read the HTTP protocol version from the httpx response (`response.http_version`): HTTP/2 or HTTP/1.1
 
-**Cache-Headers:**
+**Cache headers:**
 
-- `Cache-Control`-Header prüfen (vorhanden und sinnvoll befüllt)
-- `ETag` und `Last-Modified` prüfen
-- Fehlen = Hinweis (kein Critical, aber Optimierungspotential)
+- Check the `Cache-Control` header (present and meaningfully populated)
+- Check `ETag` and `Last-Modified`
+- Missing = hint (not critical, but an optimization opportunity)
 
-**Resource Hints:**
+**Resource hints:**
 
-- `<link rel="preconnect">` für externe Domains im HTML prüfen
-- `<link rel="preload">` für kritische Assets (Fonts, LCP-Bild) prüfen
-- `<link rel="dns-prefetch">` prüfen
-- Externe Domains ohne preconnect (z.B. Google Fonts Origin `fonts.googleapis.com`) als Hinweis melden
+- Check `<link rel="preconnect">` for external domains in the HTML
+- Check `<link rel="preload">` for critical assets (fonts, LCP image)
+- Check `<link rel="dns-prefetch">`
+- External domains without preconnect (e.g. the Google Fonts origin `fonts.googleapis.com`) reported as a hint
 
 Output:
 
@@ -485,13 +599,13 @@ Output:
 
 ### broken_links.py
 
-- Alle `<a href>` sammeln
-- Interne Links filtern (gleiche Domain)
-- Max 50 Links, per `httpx.AsyncClient` mit Semaphore (max. 10 parallele Requests) prüfen
-- Timeout 5s pro Request
-- 4xx und 5xx als broken markieren
-- Redirects (3xx) separat aufführen
-- HTTP 200 mit weniger als 200 Wörtern im Body als potentielle Soft-404 markieren
+- Collect every `<a href>`
+- Filter internal links (same domain)
+- Max 50 links, checked via `httpx.AsyncClient` with a semaphore (max. 10 parallel requests)
+- 5s timeout per request
+- 4xx and 5xx flagged as broken
+- Redirects (3xx) listed separately
+- HTTP 200 with fewer than 200 words in the body flagged as a potential soft-404
 
 Output:
 
@@ -517,20 +631,20 @@ await page.add_script_tag(url="https://cdnjs.cloudflare.com/ajax/libs/axe-core/4
 results = await page.evaluate("axe.run()")
 ```
 
-Auswerten: `violations` und `incomplete`.
+Evaluate: `violations` and `incomplete`.
 
-Pro Violation: `id`, `impact`, `wcag`-Mapping via `tags`, `description`, Anzahl betroffener Elemente, ein Beispiel-Selector aus `nodes`.
+Per violation: `id`, `impact`, WCAG mapping via `tags`, `description`, count of affected elements, one example selector from `nodes`.
 
-Nach WCAG-Level gruppieren: A, AA, AAA.
+Grouped by WCAG level: A, AA, AAA.
 
-**Manuelle DOM-Checks:**
+**Manual DOM checks:**
 
-- `<img>` ohne `alt` oder mit leerem `alt` ohne `role="presentation"`
-- `<input>`, `<select>`, `<textarea>` ohne `<label>` oder `aria-label`
-- `<a>`-Texte: "hier", "mehr", "click here", "read more", "weiter", "more", "details"
-- `lang`-Attribut auf `<html>` fehlt
-- Überschriften-Hierarchie: Sprünge erkennen (z.B. H1 direkt zu H3)
-- `outline: none` oder `outline: 0` in `<style>`-Tags suchen
+- `<img>` without `alt`, or with an empty `alt` and no `role="presentation"`
+- `<input>`, `<select>`, `<textarea>` without a `<label>` or `aria-label`
+- Generic `<a>` texts: "hier", "mehr", "click here", "read more", "weiter", "more", "details"
+- Missing `lang` attribute on `<html>`
+- Heading hierarchy: detect jumps (e.g. H1 straight to H3)
+- `outline: none` or `outline: 0` inside `<style>` tags
 
 Output:
 
@@ -571,24 +685,24 @@ Output:
 
 **JSON-LD:**
 
-- Alle `<script type="application/ld+json">` sammeln
-- JSON parsen, `@type` extrahieren
-- Bekannte Typen: `Organization`, `WebSite`, `BreadcrumbList`, `Product`, `Article`, `FAQPage`, `LocalBusiness`
-- Pflichtfelder pro Typ prüfen:
+- Collect every `<script type="application/ld+json">`
+- Parse the JSON, extract `@type`
+- Known types: `Organization`, `WebSite`, `BreadcrumbList`, `Product`, `Article`, `FAQPage`, `LocalBusiness`
+- Check required fields per type:
   - `Organization`: `name`, `url`
   - `WebSite`: `name`, `url`
   - `Article`: `headline`, `author`, `datePublished`
   - `Product`: `name`, `offers`
   - `LocalBusiness`: `name`, `address`
-  - Fehlende Pflichtfelder als Issue melden
+  - Missing required fields reported as an issue
 
 **Microdata:**
 
-- `itemtype`-Attribute im HTML erkennen und auflisten
+- Detect and list `itemtype` attributes in the HTML
 
-**OG-Type:**
+**OG type:**
 
-- `og:type` prüfen (bereits in seo.py, hier nur als Issue wenn fehlend)
+- Check `og:type` (already covered in seo.py, here only as an issue when missing)
 
 **Twitter Cards:**
 
@@ -608,7 +722,34 @@ Output:
 }
 ```
 
-Issues: kein JSON-LD, JSON-LD nicht parsebar, kein `WebSite`/`Organization` Schema, Pflichtfelder fehlen, `og:type` fehlt, keine Twitter Card.
+Issues: no JSON-LD, JSON-LD not parseable, no `WebSite`/`Organization` schema, missing required fields, missing `og:type`, no Twitter Card.
+
+---
+
+### markup.py
+
+Validates raw HTML markup against the **W3C Nu Html Checker** — the same validator behind [validator.w3.org](https://validator.w3.org/nu/). Complements `a11y.py`'s heading-hierarchy heuristic and axe-core's a11y-markup checks with an actual spec-conformance check (unclosed tags, invalid nesting, duplicate IDs, obsolete attributes, ...).
+
+**Validation:**
+
+- `POST` the raw `html` string to `https://validator.w3.org/nu/?out=json` with `Content-Type: text/html; charset=utf-8` via `httpx` (no extra dependency — `httpx` is already a core dep)
+- Timeout 15s, same pattern as every other check: network/parse failure → `{"error": str(e)}`, never raises
+- Response `messages` split by `type`: `"error"` → `errors`, `"info"`/`"warning"` → `warnings`
+- `issues` gets the first 10 errors as human-readable strings (`"Zeile {line}: {message}"`), with a `"... und N weitere Markup-Fehler"` tail note if there are more
+
+Output:
+
+```python
+{
+  "errors": list[dict],       # raw Nu Html Checker error messages (message, lastLine, extract, ...)
+  "warnings": list[dict],
+  "error_count": int,
+  "warning_count": int,
+  "issues": list[str],
+}
+```
+
+Note: this check sends the page's HTML to the public W3C validator service — same external-dependency trade-off as the existing WPScan/Shodan lookups in `wordpress_deep.py`/`hosting.py`. No opt-out flag; skip it per-run via `--skip markup` / `skip=["markup"]` if that's undesired for a given audit.
 
 ---
 
@@ -616,32 +757,32 @@ Issues: kein JSON-LD, JSON-LD nicht parsebar, kein `WebSite`/`Organization` Sche
 
 **Impressum:**
 
-- Links mit Text "Impressum", "Imprint", "Legal Notice" im HTML suchen
-- HEAD-Request auf `/impressum`, `/imprint`, `/legal-notice`
+- Search the HTML for links with the text "Impressum", "Imprint", "Legal Notice"
+- HEAD requests to `/impressum`, `/imprint`, `/legal-notice`
 
-**Datenschutz:**
+**Privacy policy:**
 
-- Links mit "Datenschutz", "Datenschutzerklärung", "Privacy Policy", "Privacy"
-- HEAD-Request auf `/datenschutz`, `/privacy-policy`, `/privacy`
+- Links with "Datenschutz", "Datenschutzerklärung", "Privacy Policy", "Privacy"
+- HEAD requests to `/datenschutz`, `/privacy-policy`, `/privacy`
 
-**Cookie-Banner-Erkennung:**
+**Cookie banner detection:**
 
-Suche nach bekannten Klassen/IDs/Attributen im HTML:
+Search the HTML for known classes/IDs/attributes:
 
 - `cookiebot`, `cookieconsent`, `cookie-banner`, `cmplz`, `borlabs-cookie`, `usercentrics`, `onetrust`, `didomi`
 
-**Tracking-Scripts:**
+**Tracking scripts:**
 
-Direkt im HTML suchen nach: `gtag(`, `ga(`, `fbq(`, `_paq`, `matomo`, `plausible`
+Search the raw HTML for: `gtag(`, `ga(`, `fbq(`, `_paq`, `matomo`, `plausible`
 
-**Third-Party Script Inventory:**
+**Third-party script inventory:**
 
-- Alle externen Domains aus `<script src>`, `<link href>`, `<img src>`, `<iframe src>` extrahieren
-- Gruppieren nach Typ (Analytics, Fonts, CDN, Social, Ads, Sonstiges) anhand bekannter Domains
-- Liste im Report ausgeben als DSGVO-Hinweis (welche Drittanbieter werden kontaktiert)
-- Bekannte Kategorisierungen: `google-analytics.com`, `googletagmanager.com` → Analytics; `fonts.googleapis.com` → Fonts; `facebook.net`, `connect.facebook.net` → Social/Ads
+- Extract every external domain from `<script src>`, `<link href>`, `<img src>`, `<iframe src>`
+- Group by type (Analytics, Fonts, CDN, Social, Ads, Other) via known domains
+- List in the report as a GDPR hint (which third parties are contacted)
+- Known categorizations: `google-analytics.com`, `googletagmanager.com` → Analytics; `fonts.googleapis.com` → Fonts; `facebook.net`, `connect.facebook.net` → Social/Ads
 
-Hinweis im Report: DSGVO-Relevanz möglich, kein rechtliches Urteil.
+Report note: possible GDPR relevance, not a legal judgment.
 
 Output:
 
@@ -659,19 +800,19 @@ Output:
 }
 ```
 
-Report-Sektion mit Disclaimer: "Dieser Check ersetzt keine rechtliche Prüfung. Befunde sind technische Hinweise, keine Rechtsberatung."
+Report section carries the disclaimer: "Dieser Check ersetzt keine rechtliche Prüfung. Befunde sind technische Hinweise, keine Rechtsberatung."
 
 ---
 
 ### tech_stack.py
 
-Erkennung via Header und HTML-Patterns:
+Detection via headers and HTML patterns:
 
-- PHP-Version: `X-Powered-By`-Header
-- CDN: `cf-ray` (Cloudflare), `x-served-by` (Fastly), Akamai-Header
-- Caching-Layer: `Via`-Header (Varnish, Nginx, LiteSpeed)
-- jQuery-Version: aus Asset-URL-Pattern
-- Page-Builder: CSS-Klassen im HTML
+- PHP version: `X-Powered-By` header
+- CDN: `cf-ray` (Cloudflare), `x-served-by` (Fastly), Akamai headers
+- Caching layer: `Via` header (Varnish, Nginx, LiteSpeed)
+- jQuery version: from asset URL pattern
+- Page builder: CSS classes in the HTML
   - Elementor: `elementor-`
   - Divi: `et_pb_`
   - WPBakery: `vc_row`
@@ -694,31 +835,31 @@ Output:
 
 ### social.py
 
-**Canonical-Konsistenz:**
+**Canonical consistency:**
 
-- Canonical URL mit aufgerufener URL vergleichen
+- Compare the canonical URL against the requested URL
 
 **Hreflang:**
 
-- `<link rel="hreflang">` Tags sammeln
-- `x-default` vorhanden prüfen
+- Collect `<link rel="hreflang">` tags
+- Check for `x-default`
 
 **Sitemap:**
 
-HEAD-Requests auf: `/sitemap.xml`, `/sitemap_index.xml`, `/wp-sitemap.xml`
+HEAD requests to: `/sitemap.xml`, `/sitemap_index.xml`, `/wp-sitemap.xml`
 
-**Robots.txt:**
+**robots.txt:**
 
-- `/robots.txt` abrufen
-- `Disallow: /wp-admin/` vorhanden prüfen
-- `Disallow: /` (versehentlich alles blockiert) als Critical markieren
-- Sitemap-Referenz in robots.txt prüfen
+- Fetch `/robots.txt`
+- Check for `Disallow: /wp-admin/`
+- `Disallow: /` (accidentally blocking everything) flagged critical
+- Check for a sitemap reference in robots.txt
 
-**Feed-Erkennung:**
+**Feed detection:**
 
-- `<link rel="alternate" type="application/rss+xml">` oder `type="application/atom+xml"` im HTML suchen
-- Fallback HEAD-Requests auf `/feed`, `/rss.xml`, `/atom.xml`, `/feed.xml`
-- Kein Feed = Hinweis (kein Critical)
+- Search the HTML for `<link rel="alternate" type="application/rss+xml">` or `type="application/atom+xml"`
+- Fallback HEAD requests to `/feed`, `/rss.xml`, `/atom.xml`, `/feed.xml`
+- No feed = hint (not critical)
 
 Output:
 
@@ -741,35 +882,35 @@ Output:
 
 ### hosting.py
 
-IP-Adresse der Domain auflösen und Hosting-Informationen ermitteln. Kein HTML nötig, läuft rein auf der Domain.
+Resolves the domain's IP address and gathers hosting information. No HTML needed, runs purely on the domain.
 
-**IP und Reverse-DNS:**
+**IP and reverse DNS:**
 
-- Domain via `socket.gethostbyname()` auflösen
-- Reverse-DNS via `socket.gethostbyaddr()`
-- IPv6-Unterstützung prüfen via `socket.getaddrinfo()` mit `AF_INET6`
+- Resolve the domain via `socket.gethostbyname()`
+- Reverse DNS via `socket.gethostbyaddr()`
+- Check IPv6 support via `socket.getaddrinfo()` with `AF_INET6`
 
-**ASN und Hosting-Provider:**
+**ASN and hosting provider:**
 
-- Via `ipwhois` (IPWhois-Lookup) ASN-Nummer, ASN-Name, Netzwerk-CIDR ermitteln
-- Fallback: `ip-api.com/json/{ip}` (kein API-Key nötig, kostenlos)
-- Bekannte Hosting-Provider anhand ASN-Name matchen: Hetzner, Netcup, IONOS, Strato, OVH, AWS, Cloudflare, DigitalOcean, Contabo
+- Determine ASN number, ASN name, network CIDR via `ipwhois` (IPWhois lookup)
+- Fallback: `ip-api.com/json/{ip}` (no API key needed, free)
+- Match known hosting providers against the ASN name: Hetzner, Netcup, IONOS, Strato, OVH, AWS, Cloudflare, DigitalOcean, Contabo
 
 **Geolocation:**
 
-- Via `ip-api.com`: Land, Stadt, Timezone des Servers
+- Via `ip-api.com`: server country, city, timezone
 
-**Server-Header-Auswertung (ergänzend zu security.py):**
+**Server header evaluation (complements security.py):**
 
-- `server`-Header: Webserver-Typ und Version extrahieren
-- Version im `server`-Header = Issue (z.B. `Apache/2.4.51` oder `nginx/1.18.0`)
-- `x-powered-by` mit Versionsnummer = Issue
+- `server` header: extract web server type and version
+- A version in the `server` header = issue (e.g. `Apache/2.4.51` or `nginx/1.18.0`)
+- `x-powered-by` with a version number = issue
 
 **Shodan (optional):**
 
-- Wenn `SHODAN_API_KEY` gesetzt: IP gegen Shodan-API prüfen
-- Offene Ports und bekannte CVEs aus Shodan-Daten extrahieren
-- Ohne Key: Hinweis im Report dass Shodan-Check übersprungen wurde
+- If `SHODAN_API_KEY` is set: check the IP against the Shodan API
+- Extract open ports and known CVEs from the Shodan data
+- Without a key: note in the report that the Shodan check was skipped
 
 Output:
 
@@ -794,65 +935,67 @@ Output:
 }
 ```
 
-Issues: Server-Version im Header sichtbar, `x-powered-by` mit Version, Shodan meldet kritische offene Ports (z.B. 3306, 6379, 27017 öffentlich erreichbar).
+Issues: server version visible in the header, `x-powered-by` with a version, Shodan reports critical open ports (e.g. 3306, 6379, 27017 publicly reachable).
+
+Rendered in the report under **Hosting & Server** — see `report.py`'s `module_order`, using this module's own fields (`ip`, `hosting_provider`, `asn`, `city`/`country`, `server_header`, Shodan results). Do not confuse this with the **DNS** section, which renders `dns.py`'s output.
 
 ---
 
 ### dns.py
 
-Vollständige DNS-Analyse der Domain via `dnspython`. Kein HTML nötig.
+Full DNS analysis of the domain via `dnspython`. No HTML needed.
 
-**Records abfragen:**
+**Record queries:**
 
-- `A` und `AAAA`: IP-Adressen
-- `MX`: Mailserver mit Priorität
-- `NS`: Nameserver, Nameserver-Provider identifizieren (Cloudflare, AWS Route53, IONOS, Hetzner)
-- `TXT`: alle TXT-Records sammeln
-- `CNAME`: wenn vorhanden
-- TTL aller Records auslesen
+- `A` and `AAAA`: IP addresses
+- `MX`: mail servers with priority
+- `NS`: nameservers, identify the nameserver provider (Cloudflare, AWS Route53, IONOS, Hetzner)
+- `TXT`: collect all TXT records
+- `CNAME`: if present
+- Read the TTL of all records
 
 **SPF:**
 
-- TXT-Records auf `v=spf1` prüfen
-- SPF vorhanden und valide (syntaktisch, nicht vollständig evaluiert)
-- Kein SPF = Issue
+- Check TXT records for `v=spf1`
+- SPF present and syntactically valid (not fully evaluated)
+- No SPF = issue
 
 **DMARC:**
 
-- `_dmarc.[domain]` TXT-Record abfragen
-- `v=DMARC1` prüfen
-- Policy extrahieren: `none`, `quarantine`, `reject`
-- `p=none` = Warning (kein Schutz aktiv)
-- Kein DMARC = Issue
+- Query the `_dmarc.[domain]` TXT record
+- Check for `v=DMARC1`
+- Extract the policy: `none`, `quarantine`, `reject`
+- `p=none` = warning (no protection active)
+- No DMARC = issue
 
 **DKIM:**
 
-- Gängige Selektoren prüfen: `default._domainkey`, `google._domainkey`, `mail._domainkey`, `dkim._domainkey`
-- Wenn TXT-Record vorhanden und `v=DKIM1` enthält = DKIM erkannt
-- Kein DKIM gefunden = Hinweis (kein Critical, da Selector unbekannt sein kann)
+- Check common selectors: `default._domainkey`, `google._domainkey`, `mail._domainkey`, `dkim._domainkey`
+- If a TXT record is present and contains `v=DKIM1` = DKIM detected
+- No DKIM found = hint (not critical, the selector may be unknown)
 
 **DNSSEC:**
 
-- `DS`-Record auf der Domain prüfen
-- Vorhanden = DNSSEC aktiviert
+- Check the `DS` record on the domain
+- Present = DNSSEC enabled
 
 **CAA:**
 
-- `CAA`-Record auf der Domain prüfen (`dns.resolver.resolve(domain, 'CAA')`)
-- Fehlender CAA-Record = Hinweis (erlaubt beliebige CAs Zertifikate auszustellen)
-- Vorhandene CAA-Einträge auflisten (z.B. `letsencrypt.org`, `sectigo.com`)
+- Check the `CAA` record on the domain (`dns.resolver.resolve(domain, 'CAA')`)
+- Missing CAA record = hint (allows any CA to issue certificates)
+- List existing CAA entries (e.g. `letsencrypt.org`, `sectigo.com`)
 
 **BIMI:**
 
-- `default._bimi.[domain]` TXT-Record prüfen
-- Wenn vorhanden: `v=BIMI1` und `l=`-URL extrahieren
-- Kein BIMI = Hinweis (kein Critical)
+- Check the `default._bimi.[domain]` TXT record
+- If present: extract `v=BIMI1` and the `l=` URL
+- No BIMI = hint (not critical)
 
 **MTA-STS:**
 
-- `_mta-sts.[domain]` TXT-Record prüfen
-- HEAD-Request auf `https://mta-sts.[domain]/.well-known/mta-sts.txt`
-- Kein MTA-STS = Hinweis (kein Critical)
+- Check the `_mta-sts.[domain]` TXT record
+- HEAD request to `https://mta-sts.[domain]/.well-known/mta-sts.txt`
+- No MTA-STS = hint (not critical)
 
 Output:
 
@@ -882,17 +1025,17 @@ Output:
 }
 ```
 
-Issues: kein SPF, kein DMARC, DMARC-Policy `none`, kein DKIM gefunden, kein DNSSEC, kein CAA-Record.
+Issues: no SPF, no DMARC, DMARC policy `none`, no DKIM found, no DNSSEC, no CAA record.
 
 ---
 
 ### content_quality.py
 
-- Sichtbarer Text extrahieren (ohne `<nav>`, `<footer>`, `<header>`)
-- Wortanzahl zählen, unter 300 = Warning "Thin Content"
-- Duplicate Title/H1: wenn `<title>` exakt gleich H1
-- Lesbarkeit: Flesch-Kincaid approximiert via durchschnittlicher Satzlänge (keine externen Pakete)
-- Broken Images: `<img src>` per HEAD-Request prüfen, max 20 Bilder, Timeout 5s, parallel via `httpx.AsyncClient`
+- Extract visible text (excluding `<nav>`, `<footer>`, `<header>`)
+- Count words, under 300 = "thin content" warning
+- Duplicate title/H1: when `<title>` is exactly equal to the H1
+- Readability: Flesch-Kincaid approximated via average sentence length (no external packages)
+- Broken images: check `<img src>` via HEAD request, max 20 images, 5s timeout, parallel via `httpx.AsyncClient`
 
 Output:
 
@@ -910,34 +1053,44 @@ Output:
 
 ---
 
-## Setup & Ausführung
+## Setup & Running
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate        # macOS/Linux
-# .venv\Scripts\activate         # Windows
+uv sync --extra cli               # core + CLI (rich)
+uv sync --extra cli --extra ai    # + AI summary support (anthropic)
+uv run playwright install chromium   # once, for the a11y module
 
-pip install -r requirements.txt
-playwright install chromium      # einmalig für a11y-Modul
-
-python main.py https://example.com
+uv run site-auditor https://tobeworks.de
 ```
 
-Das Tool läuft ausschließlich im aktivierten venv. Kein globales `pip install`.
+To install `site-auditor` as a global command:
+
+```bash
+uv tool install .
+site-auditor https://tobeworks.de
+```
+
+For pure library use (embedding `run_audit`/`build_report` in another project), no extras are required:
+
+```bash
+uv add site-auditor
+# or, inside another uv project's pyproject.toml, as a path/git dependency during development
+```
 
 ---
 
-## KI-Zusammenfassung (`--summary`)
+## AI summary (`--summary`)
 
-Wenn `--summary` gesetzt ist, wird nach Abschluss aller Checks die Claude API aufgerufen und eine laienverständliche Zusammenfassung generiert. Voraussetzung: `ANTHROPIC_API_KEY` als Umgebungsvariable gesetzt.
+If `--summary` is set, the Claude API is called after all checks finish and a plain-language summary is generated. Requires the `ai` extra and `ANTHROPIC_API_KEY` set as an environment variable.
 
-**Implementierung (`auditor/summary.py`):**
+**Implementation (`auditor/summary.py`):**
 
-- Alle gesammelten Issues und Kennzahlen aus den Modul-Ergebnissen kompakt als Text zusammenstellen
-- An Claude API senden (Modell: `claude-sonnet-4-6`, Prompt auf Deutsch)
-- Antwort als eigene Sektion `## Zusammenfassung für Laien` an den Report anhängen (vor dem Executive Summary)
+- Compactly assemble all collected issues and metrics from the module results as text
+- Send to the Claude API (model: `claude-sonnet-4-6`, prompt in German)
+- Append the response as its own section `## Zusammenfassung für Laien` to the report (before the Executive Summary)
+- `generate(url, results, on_progress=None)` — same callback contract as `run_audit`: no direct console output, `on_progress("warning", ...)` fires for a missing key/package instead of printing
 
-**Prompt-Vorlage:**
+**Prompt template:**
 
 ```
 Du bist ein freundlicher Web-Experte, der einem nicht-technischen Kunden erklärt,
@@ -947,25 +1100,27 @@ Beginne mit dem Gesamteindruck, nenne dann die 3 wichtigsten Probleme in einfach
 und schließe mit einer positiven Ermutigung. Verwende keine Markdown-Tabellen.
 
 Audit-Ergebnisse:
-{komprimierte Issues und Kennzahlen aller Module}
+{compressed issues and metrics from all modules}
 ```
 
-**Output:** Die Zusammenfassung wird als zusätzlicher Block in den Report eingefügt:
+**Output:** the summary is inserted as an additional block in the report:
 
 ```markdown
 ## Zusammenfassung für Laien
 
-[KI-generierter Text in einfacher Sprache]
+[AI-generated text in plain language]
 
 *Dieser Text wurde automatisch von einer KI erstellt und dient nur zur Orientierung.*
 ```
 
-Wenn `ANTHROPIC_API_KEY` nicht gesetzt: Sektion wird übersprungen, Hinweis im Terminal via `rich`.
+If `ANTHROPIC_API_KEY` is not set: the section is skipped, `on_progress("warning", ...)` fires (rendered as a terminal hint via `rich` in the CLI).
 
 ---
 
-## Umgebungsvariablen
+## Environment variables
 
-- `WPSCAN_API_KEY` (optional): WPScan Vulnerability API für Plugin-Checks
-- `SHODAN_API_KEY` (optional): Shodan-Lookup für offene Ports und CVEs
-- `ANTHROPIC_API_KEY` (optional): Claude API für `--summary` Laien-Zusammenfassung
+- `WPSCAN_API_KEY` (optional): WPScan Vulnerability API for plugin checks
+- `SHODAN_API_KEY` (optional): Shodan lookup for open ports and CVEs
+- `ANTHROPIC_API_KEY` (optional): Claude API for the `--summary` / `auditor.summary.generate()` plain-language summary
+
+Copy `.env.example` to `.env` and fill in what you have — `auditor/cli.py` loads `.env` automatically via `python-dotenv`. Library users of `run_audit()`/`build_report()` directly are responsible for loading their own env (dotenv, container env, secrets manager, ...) before calling in.

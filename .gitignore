@@ -1,4 +1,9 @@
 .venv/
+bin/
+lib/
+lib64/
+include/
+pyvenv.cfg
 reports/
 __pycache__/
 **/__pycache__/

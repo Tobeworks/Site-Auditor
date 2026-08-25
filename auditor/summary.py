@@ -1,7 +1,7 @@
 import os
-from rich.console import Console
+from typing import Callable
 
-console = Console()
+OnProgress = Callable[[str, str], None]
 
 
 def _build_context(url: str, results: dict) -> str:
@@ -98,20 +98,29 @@ def _build_context(url: str, results: dict) -> str:
         c = results["content_quality"]
         lines.append(f"Wortanzahl: {c.get('word_count', 0)} {'(ZU WENIG – Thin Content)' if c.get('thin_content') else ''}")
 
+    if "markup" in results:
+        m = results["markup"]
+        if "error" not in m:
+            lines.append(f"HTML-Markup-Fehler (W3C): {m.get('error_count', 0)}")
+
     return "\n".join(lines)
 
 
-def generate(url: str, results: dict) -> str | None:
+def generate(url: str, results: dict, on_progress: OnProgress | None = None) -> str | None:
+    def notify(name: str, message: str):
+        if on_progress:
+            on_progress(name, message)
+
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        console.print("[yellow]⚠ ANTHROPIC_API_KEY nicht gesetzt – KI-Zusammenfassung übersprungen.[/yellow]")
+        notify("warning", "ANTHROPIC_API_KEY nicht gesetzt – KI-Zusammenfassung übersprungen.")
         return None
 
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
     except ImportError:
-        console.print("[yellow]⚠ anthropic-Paket nicht installiert – KI-Zusammenfassung übersprungen.[/yellow]")
+        notify("warning", "anthropic-Paket nicht installiert – KI-Zusammenfassung übersprungen.")
         return None
 
     context = _build_context(url, results)
@@ -130,7 +139,7 @@ Schreibe sachlich aber verständlich. Keine leeren Floskeln, keine übertriebene
 
 {context}"""
 
-    console.print("[dim]→ KI-Zusammenfassung wird generiert...[/dim]")
+    notify("summary", "KI-Zusammenfassung wird generiert...")
 
     with client.messages.stream(
         model="claude-sonnet-4-6",
