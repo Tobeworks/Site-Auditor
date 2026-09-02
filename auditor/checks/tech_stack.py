@@ -4,17 +4,14 @@ from bs4 import BeautifulSoup
 
 def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
     try:
-        issues = []
-
-        # PHP version
+        # ponytail: PHP-version exposure is judged (security + EOL) in hosting.py's
+        # HST-02/HST-04 — this module stays purely descriptive, no duplicate finding here.
         php_version = None
         powered_by = headers.get("x-powered-by", "")
         m = re.search(r"PHP/([\d.]+)", powered_by)
         if m:
             php_version = m.group(1)
-            issues.append(f"PHP-Version im Header sichtbar: {php_version}")
 
-        # CDN
         cdn = None
         if "cf-ray" in headers:
             cdn = "Cloudflare"
@@ -23,7 +20,6 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
         elif "x-akamai-transformed" in headers or "akamai" in headers.get("server", "").lower():
             cdn = "Akamai"
 
-        # Cache layer
         cache_layer = None
         via = headers.get("via", "").lower()
         server = headers.get("server", "").lower()
@@ -34,7 +30,6 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
         elif "litespeed" in server:
             cache_layer = "LiteSpeed"
 
-        # jQuery version
         jquery_version = None
         for tag in soup.find_all("script", src=True):
             src = tag.get("src", "")
@@ -43,7 +38,6 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
                 jquery_version = m.group(1)
                 break
 
-        # Page builder
         page_builder = None
         if soup.find(class_=re.compile(r"elementor-")):
             page_builder = "Elementor"
@@ -60,7 +54,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
             "cache_layer": cache_layer,
             "jquery_version": jquery_version,
             "page_builder": page_builder,
-            "issues": issues,
+            "findings": [],
         }
     except Exception as e:
         return {"error": str(e)}
