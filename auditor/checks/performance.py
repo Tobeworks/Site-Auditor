@@ -44,7 +44,6 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
     try:
         findings = []
         hostname = urlparse(url).netloc
-        base = f"{urlparse(url).scheme}://{hostname}"
 
         # Compression & protocol
         content_encoding = headers.get("content-encoding", "")
@@ -65,10 +64,8 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
         head = soup.find("head")
         render_blocking_scripts = 0
         render_blocking_styles = 0
-        script_srcs = []
         if head:
             for tag in head.find_all("script", src=True):
-                script_srcs.append(tag.get("src", ""))
                 if not tag.get("defer") and not tag.get("async"):
                     render_blocking_scripts += 1
             for tag in head.find_all("link", rel="stylesheet"):
@@ -141,13 +138,16 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
                 break
         icon_font_detected = icon_font_link is not None
 
-        # Asset sample for cache-header + size checks (CSS/JS from <head>, capped at 5 for cache, 20 for size ranking)
+        # Asset sample for cache-header + size checks (scripts + stylesheets, capped at 5 for cache, 20 for size ranking)
         asset_urls = []
-        for tag in soup.find_all(["script", "link"]):
-            src = tag.get("src") or tag.get("href")
-            if not src:
-                continue
+        for tag in soup.find_all("script", src=True):
+            src = tag.get("src")
             full = src if src.startswith("http") else urljoin(url, src)
+            if full not in asset_urls:
+                asset_urls.append(full)
+        for tag in soup.find_all("link", rel="stylesheet", href=True):
+            href = tag.get("href")
+            full = href if href.startswith("http") else urljoin(url, href)
             if full not in asset_urls:
                 asset_urls.append(full)
         for src in image_srcs:
