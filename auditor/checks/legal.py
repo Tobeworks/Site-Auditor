@@ -3,6 +3,7 @@ import httpx
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
+from auditor.findings import finding
 
 KNOWN_THIRD_PARTY_CATEGORIES = {
     "google-analytics.com": "Analytics",
@@ -33,7 +34,6 @@ COOKIE_SOLUTIONS = [
     "borlabs-cookie", "usercentrics", "onetrust", "didomi",
 ]
 
-# Tracking patterns that always require consent (third-party / cookie-based)
 CONSENT_REQUIRED_PATTERNS = {
     "gtag(": "Google Analytics/GTM",
     "ga(": "Google Analytics",
@@ -42,19 +42,12 @@ CONSENT_REQUIRED_PATTERNS = {
     "_clarity": "Microsoft Clarity",
 }
 
-# Plausible is always cookieless → no consent needed
 COOKIELESS_PATTERNS = {
     "plausible": "Plausible (cookielos, kein Consent nötig)",
 }
 
 
 def _detect_matomo(html: str, hostname: str) -> dict:
-    """
-    Distinguish between:
-    - Self-hosted Matomo on same domain → likely cookieless-capable, no consent needed
-    - Matomo Cloud (matomo.cloud) or external → consent required
-    - Matomo with disableCookies() or cookieless config → no consent needed
-    """
     if "_paq" not in html:
         return {"found": False}
 
@@ -62,11 +55,9 @@ def _detect_matomo(html: str, hostname: str) -> dict:
     external = False
     matomo_url = None
 
-    # Check for explicit cookieless config
     if "disableCookies" in html or "requireCookieConsent" in html or "cookieless" in html.lower():
         cookieless = True
 
-    # Find the Matomo tracker URL
     m = re.search(r'["\']([^"\']*matomo[^"\']*\.php)["\']', html, re.IGNORECASE)
     if not m:
         m = re.search(r'setTrackerUrl\(["\']([^"\']+)["\']', html)
@@ -74,9 +65,7 @@ def _detect_matomo(html: str, hostname: str) -> dict:
         matomo_url = m.group(1)
         parsed = urlparse(matomo_url if matomo_url.startswith("http") else f"https:{matomo_url}")
         tracker_host = parsed.netloc
-        if tracker_host and tracker_host != hostname and "matomo.cloud" in tracker_host:
-            external = True
-        elif tracker_host and tracker_host != hostname and tracker_host:
+        if tracker_host and tracker_host != hostname:
             external = True
 
     return {
@@ -89,7 +78,7 @@ def _detect_matomo(html: str, hostname: str) -> dict:
 
 def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
     try:
-        issues = []
+        findings = []
         hostname = urlparse(url).netloc
         base = f"{urlparse(url).scheme}://{hostname}"
 
@@ -117,7 +106,6 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
             ["/datenschutz", "/privacy-policy", "/privacy"],
         )
 
-        # Cookie banner
         html_lower = html.lower()
         cookie_banner_detected = False
         cookie_solution = None
@@ -127,7 +115,6 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
                 cookie_solution = solution
                 break
 
-        # Matomo detection (smart)
         matomo = _detect_matomo(html, hostname)
         matomo_needs_consent = False
         matomo_note = None
@@ -136,18 +123,16 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
                 matomo_note = "Matomo (cookielos konfiguriert – kein Consent erforderlich)"
             elif not matomo["external"]:
                 matomo_note = "Matomo (selbst-gehostet – bei cookielos-Betrieb kein Consent nötig, bitte prüfen)"
-                matomo_needs_consent = True  # still warn unless confirmed cookieless
+                matomo_needs_consent = True
             else:
                 matomo_note = f"Matomo Cloud/extern ({matomo['matomo_url']}) – Consent erforderlich"
                 matomo_needs_consent = True
 
-        # Consent-required tracking
         tracking_needs_consent = []
         for pattern, label in CONSENT_REQUIRED_PATTERNS.items():
             if pattern in html:
                 tracking_needs_consent.append(label)
 
-        # Cookieless tracking (no consent needed)
         tracking_cookieless = []
         for pattern, label in COOKIELESS_PATTERNS.items():
             if pattern in html:
@@ -155,7 +140,6 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
 
         tracking_in_html = tracking_needs_consent + ([matomo_note] if matomo["found"] else []) + tracking_cookieless
 
-        # Third-party inventory
         third_party_domains = []
         seen = set()
         for tag in soup.find_all(["script", "link", "img", "iframe"]):
@@ -173,17 +157,37 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
                             break
                     third_party_domains.append({"domain": domain, "category": category})
 
-        # Issues
+        # LGL-01 Impressum
         if not impressum_url:
-            issues.append("Kein Impressum gefunden")
-        if not privacy_url:
-            issues.append("Keine Datenschutzerklärung gefunden")
+            findings.append(finding("LGL-01", "HOCH", "Kein Impressum gefunden",
+                "In Deutschland ist ein Impressum nach § 5 TMG/DDG für geschäftsmäßige Websites verpflichtend — fehlt es, drohen Abmahnungen.",
+                solution="Impressum-Seite mit den gesetzlich vorgeschriebenen Pflichtangaben erstellen und verlinken."))
+        else:
+            findings.append(finding("LGL-01", "POSITIV", f"Impressum gefunden ({impressum_url})",
+                "Pflichtangaben sind erreichbar."))
 
+        # LGL-02 Datenschutzerklärung
+        if not privacy_url:
+            findings.append(finding("LGL-02", "HOCH", "Keine Datenschutzerklärung gefunden",
+                "Eine Datenschutzerklärung ist nach Art. 13 DSGVO verpflichtend, sobald personenbezogene Daten verarbeitet werden (z.B. durch Tracking, Kontaktformulare).",
+                solution="Datenschutzerklärung erstellen und von jeder Seite aus verlinken."))
+        else:
+            findings.append(finding("LGL-02", "POSITIV", f"Datenschutzerklärung gefunden ({privacy_url})",
+                "Nutzer können sich über die Datenverarbeitung informieren."))
+
+        # LGL-03 Consent-pflichtiges Tracking
         needs_consent = tracking_needs_consent + (["Matomo"] if matomo_needs_consent else [])
         if needs_consent and not cookie_banner_detected:
-            issues.append(f"Consent-pflichtiges Tracking ohne Cookie-Banner: {', '.join(needs_consent)}")
+            findings.append(finding("LGL-03", "HOCH", f"Consent-pflichtiges Tracking ohne Cookie-Banner: {', '.join(needs_consent)}",
+                "Tracking ohne vorherige Einwilligung verstößt gegen die TTDSG-/DSGVO-Vorgaben zur Cookie-Einwilligung.",
+                solution="Cookie-Consent-Lösung einbinden, die Tracking-Skripte erst nach Zustimmung lädt."))
         elif needs_consent:
-            issues.append(f"Consent-pflichtiges Tracking aktiv: {', '.join(needs_consent)} – DSGVO-Prüfung empfohlen")
+            findings.append(finding("LGL-03", "MITTEL", f"Consent-pflichtiges Tracking aktiv: {', '.join(needs_consent)} – DSGVO-Prüfung empfohlen",
+                "Ein Cookie-Banner ist vorhanden, es lässt sich von außen aber nicht sicher prüfen, ob das Tracking tatsächlich erst nach Zustimmung geladen wird.",
+                solution="Prüfen, ob die Tracking-Skripte technisch erst nach erteilter Einwilligung geladen werden (nicht nur der Banner angezeigt wird)."))
+        else:
+            findings.append(finding("LGL-03", "POSITIV", "Kein zwingend consent-pflichtiges Tracking erkannt",
+                "Kein bekanntes Tracking-Skript gefunden, das eine vorherige Einwilligung erfordert."))
 
         return {
             "impressum_found": bool(impressum_url),
@@ -198,7 +202,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
             "matomo_note": matomo_note,
             "tracking_in_html": tracking_in_html,
             "third_party_domains": third_party_domains,
-            "issues": issues,
+            "findings": findings,
         }
     except Exception as e:
         return {"error": str(e)}
