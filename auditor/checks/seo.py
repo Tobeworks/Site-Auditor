@@ -2,10 +2,12 @@ import httpx
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
+from auditor.findings import finding
+
 
 def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
     try:
-        issues = []
+        findings = []
         base = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
 
         # Title
@@ -84,49 +86,116 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
             except Exception:
                 pass
 
-        # Issues
+        # SEO-01 Title
         if not title:
-            issues.append("Kein <title>-Tag vorhanden")
+            findings.append(finding("SEO-01", "HOCH", "Kein <title>-Tag vorhanden",
+                "Ohne Title-Tag generiert Google den Snippet-Text automatisch aus dem Seiteninhalt — Klickrate und Keyword-Relevanz in der Suche leiden.",
+                solution="Einen aussagekräftigen <title>-Tag mit 50-60 Zeichen ergänzen: Kernkeyword + Nutzenversprechen."))
         elif title_length < 50:
-            issues.append(f"Title zu kurz ({title_length} Zeichen, optimal 50-60)")
+            findings.append(finding("SEO-01", "MITTEL", f"Title zu kurz ({title_length} Zeichen, optimal 50-60)",
+                "Ungenutztes Zeichen-Budget im Suchergebnis — weniger Platz für Keywords und Nutzenversprechen.",
+                solution="Title auf 50-60 Zeichen erweitern, z.B. um Marke oder Nutzenversprechen."))
         elif title_length > 60:
-            issues.append(f"Title zu lang ({title_length} Zeichen, optimal 50-60)")
+            findings.append(finding("SEO-01", "MITTEL", f"Title zu lang ({title_length} Zeichen, optimal 50-60)",
+                "Google kürzt den Titel im Suchergebnis ab, wichtige Wörter am Ende gehen verloren.",
+                solution="Title auf 50-60 Zeichen kürzen, wichtigste Begriffe nach vorne stellen."))
+        else:
+            findings.append(finding("SEO-01", "POSITIV", f"Title-Länge optimal ({title_length} Zeichen)",
+                "Titel wird in der Suche vollständig angezeigt."))
 
+        # SEO-02 Meta-Description
         if not meta_description:
-            issues.append("Keine Meta-Description vorhanden")
+            findings.append(finding("SEO-02", "MITTEL", "Keine Meta-Description vorhanden",
+                "Google generiert den Beschreibungstext im Suchergebnis automatisch aus dem Seiteninhalt — weniger Kontrolle über die Klickrate.",
+                solution="Meta-Description mit 120-160 Zeichen ergänzen, die zum Klick motiviert."))
         elif meta_description_length < 120:
-            issues.append(f"Meta-Description zu kurz ({meta_description_length} Zeichen, optimal 120-160)")
+            findings.append(finding("SEO-02", "MITTEL", f"Meta-Description zu kurz ({meta_description_length} Zeichen, optimal 120-160)",
+                "Ungenutztes Zeichen-Budget im Suchergebnis-Snippet.",
+                solution="Meta-Description auf 120-160 Zeichen erweitern."))
         elif meta_description_length > 160:
-            issues.append(f"Meta-Description zu lang ({meta_description_length} Zeichen, optimal 120-160)")
+            findings.append(finding("SEO-02", "MITTEL", f"Meta-Description zu lang ({meta_description_length} Zeichen, optimal 120-160)",
+                "Google kürzt die Beschreibung im Suchergebnis ab.",
+                solution="Meta-Description auf 120-160 Zeichen kürzen."))
+        else:
+            findings.append(finding("SEO-02", "POSITIV", f"Meta-Description-Länge optimal ({meta_description_length} Zeichen)",
+                "Beschreibung wird im Suchergebnis vollständig angezeigt."))
 
+        # SEO-03 H1
         if h1_count == 0:
-            issues.append("Kein H1-Tag vorhanden")
+            findings.append(finding("SEO-03", "HOCH", "Kein H1-Tag vorhanden",
+                "Fehlt die Haupt-Überschrift, verliert Google ein wichtiges Signal für das Seitenthema.",
+                solution="Eine einzelne, thema-beschreibende H1-Überschrift ergänzen."))
         elif h1_count > 1:
-            issues.append(f"Mehrere H1-Tags vorhanden ({h1_count})")
+            findings.append(finding("SEO-03", "MITTEL", f"Mehrere H1-Tags vorhanden ({h1_count})",
+                "Mehrere H1 verwässern das thematische Signal für die Seite.",
+                solution="Nur eine H1 pro Seite verwenden, weitere Überschriften auf H2/H3 umstellen."))
+        else:
+            findings.append(finding("SEO-03", "POSITIV", "Genau eine H1 vorhanden",
+                "Klares thematisches Signal für Suchmaschinen."))
 
+        # SEO-04 Canonical
         if not canonical:
-            issues.append("Kein Canonical-Tag vorhanden")
+            findings.append(finding("SEO-04", "HOCH", "Kein Canonical-Tag vorhanden",
+                "Ohne Canonical kann Google bei mehreren erreichbaren URL-Varianten der Seite die falsche als Referenz indexieren oder Ranking-Signale aufteilen.",
+                solution="<link rel=\"canonical\" href=\"...\"> mit der bevorzugten URL im <head> ergänzen."))
+        else:
+            findings.append(finding("SEO-04", "POSITIV", "Canonical-Tag vorhanden",
+                "Google erhält ein klares Signal für die bevorzugte URL."))
 
+        # SEO-05 og:image
         if not og_image:
-            issues.append("Kein og:image vorhanden")
-        elif og_image_width and og_image_height:
-            try:
-                if int(og_image_width) < 1200 or int(og_image_height) < 630:
-                    issues.append(f"og:image zu klein ({og_image_width}×{og_image_height}px, empfohlen 1200×630)")
-            except ValueError:
-                pass
+            findings.append(finding("SEO-05", "MITTEL", "Kein og:image vorhanden",
+                "Beim Teilen in sozialen Netzwerken/Messengern wird kein Vorschaubild angezeigt — geringere Klickrate.",
+                solution="og:image mit mind. 1200×630px ergänzen."))
+        else:
+            small = False
+            if og_image_width and og_image_height:
+                try:
+                    small = int(og_image_width) < 1200 or int(og_image_height) < 630
+                except ValueError:
+                    pass
+            if small:
+                findings.append(finding("SEO-05", "MITTEL", f"og:image zu klein ({og_image_width}×{og_image_height}px, empfohlen 1200×630)",
+                    "Kleine Vorschaubilder werden auf manchen Plattformen verpixelt oder gar nicht angezeigt.",
+                    solution="og:image auf mindestens 1200×630px vergrößern."))
+            else:
+                findings.append(finding("SEO-05", "POSITIV", "og:image vorhanden und ausreichend groß",
+                    "Vorschaubild wird beim Teilen korrekt angezeigt."))
 
+        # SEO-06 og:type
         if not og_type:
-            issues.append("Kein og:type vorhanden")
+            findings.append(finding("SEO-06", "MITTEL", "Kein og:type vorhanden",
+                "Ohne og:type wählen Plattformen beim Teilen einen generischen Vorschau-Typ.",
+                solution="og:type ergänzen, z.B. \"website\" oder \"article\"."))
+        else:
+            findings.append(finding("SEO-06", "POSITIV", f"og:type gesetzt ({og_type})",
+                "Plattformen zeigen den passenden Vorschau-Typ beim Teilen."))
 
+        # SEO-07 Twitter Card
         if not twitter_card:
-            issues.append("Keine Twitter Card vorhanden")
+            findings.append(finding("SEO-07", "MITTEL", "Keine Twitter Card vorhanden",
+                "Ohne Twitter-Card-Tags fällt X/Twitter beim Teilen auf eine einfache Link-Vorschau ohne Bild zurück.",
+                solution="twitter:card (z.B. \"summary_large_image\") ergänzen."))
+        else:
+            findings.append(finding("SEO-07", "POSITIV", f"Twitter Card gesetzt ({twitter_card})",
+                "Vorschau auf X/Twitter wird korrekt gerendert."))
 
+        # SEO-08 HTML lang
         if not lang:
-            issues.append("HTML lang-Attribut fehlt")
+            findings.append(finding("SEO-08", "MITTEL", "HTML lang-Attribut fehlt",
+                "Suchmaschinen und Screenreader können die Sprache der Seite nicht sicher bestimmen.",
+                solution="lang-Attribut am <html>-Tag setzen, z.B. lang=\"de\"."))
+        else:
+            findings.append(finding("SEO-08", "POSITIV", f"HTML lang-Attribut gesetzt ({lang})",
+                "Sprache der Seite ist eindeutig maschinenlesbar."))
 
+        # SEO-09 Favicon
         if not favicon_found:
-            issues.append("Kein Favicon gefunden")
+            findings.append(finding("SEO-09", "MITTEL", "Kein Favicon gefunden",
+                "Fehlendes Favicon wirkt in Browser-Tabs und Lesezeichen unprofessionell.",
+                solution="Favicon als <link rel=\"icon\"> im <head> einbinden oder unter /favicon.ico bereitstellen."))
+        else:
+            findings.append(finding("SEO-09", "POSITIV", "Favicon vorhanden", "Browser-Tab und Lesezeichen zeigen ein Icon."))
 
         return {
             "title": title,
@@ -151,7 +220,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
             "favicon_found": favicon_found,
             "apple_touch_icon_found": apple_touch_icon_found,
             "web_app_manifest_found": web_app_manifest_found,
-            "issues": issues,
+            "findings": findings,
         }
     except Exception as e:
         return {"error": str(e)}
