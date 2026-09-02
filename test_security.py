@@ -50,11 +50,14 @@ def test_expired_cert_is_kritisch():
 def test_error_path_returns_error_key():
     # A plain httpx.get failure is already caught internally by the module (matches
     # old behavior — https_redirect just stays False), so force a real top-level
-    # failure via a broken soup instead.
+    # failure via a broken soup instead. httpx.get still runs before that failure
+    # is reached (HTTPS-redirect check comes first) — mock it too, or this test
+    # opens a real socket to tobeworks.de on every run.
     class BoomSoup:
         def find_all(self, *a, **k):
             raise RuntimeError("boom")
-    result = security.run("https://tobeworks.de", "<html></html>", BoomSoup(), {})
+    with patch("httpx.get", side_effect=Exception("network down")):
+        result = security.run("https://tobeworks.de", "<html></html>", BoomSoup(), {})
     assert "error" in result
 
 
