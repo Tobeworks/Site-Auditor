@@ -48,6 +48,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
             "version": version,
             "theme": theme,
             "plugins": plugins,
+            "findings": [],
         }
     except Exception as e:
         return {"error": str(e)}
