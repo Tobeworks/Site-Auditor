@@ -23,7 +23,7 @@ def finding(
     impact: str,
     solution: str | None = None,
     effort_days: tuple[float, float] | None = None,
-    timeframe: str | None = None,
+    timeframe: Literal["kurzfristig", "mittelfristig", "langfristig"] | None = None,
 ) -> Finding:
     """Build a Finding. Raises ValueError if severity/solution are inconsistent
     (POSITIV must not carry a solution, everything else must)."""
