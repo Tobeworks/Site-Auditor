@@ -1,6 +1,8 @@
 import asyncio
 from bs4 import BeautifulSoup
 
+from auditor.findings import finding
+
 
 async def _run_axe(url: str) -> dict:
     from playwright.async_api import async_playwright
@@ -16,9 +18,8 @@ async def _run_axe(url: str) -> dict:
 
 def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
     try:
-        issues = []
+        findings = []
 
-        # axe-core
         axe_results = asyncio.run(_run_axe(url))
         raw_violations = axe_results.get("violations", [])
         incomplete = axe_results.get("incomplete", [])
@@ -41,7 +42,6 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
                 "example_selector": example_selector,
             })
 
-        # Manual DOM checks
         images_without_alt = 0
         for img in soup.find_all("img"):
             alt = img.get("alt")
@@ -66,14 +66,12 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
             if text in generic_texts:
                 generic_link_texts.append(a.get_text(strip=True))
 
-        # Heading hierarchy
         heading_hierarchy_issues = []
         headings = [int(h.name[1]) for h in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])]
         for i in range(1, len(headings)):
             if headings[i] - headings[i - 1] > 1:
                 heading_hierarchy_issues.append(f"Sprung von H{headings[i-1]} zu H{headings[i]}")
 
-        # Focus outline suppression
         focus_outline_suppressed = False
         for style in soup.find_all("style"):
             text = style.get_text()
@@ -84,24 +82,77 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
         html_tag = soup.find("html")
         lang_attribute = html_tag.get("lang") if html_tag else None
 
-        # Build issues
-        total_violations = sum(counts.values())
+        # A11-01 kritische WCAG-Verstöße
         if counts["critical"] > 0:
-            issues.append(f"{counts['critical']} kritische Barrierefreiheits-Verstöße (WCAG)")
+            findings.append(finding("A11-01", "KRITISCH", f"{counts['critical']} kritische Barrierefreiheits-Verstöße (WCAG)",
+                "Kritische WCAG-Verstöße können bestimmte Nutzergruppen (z.B. Screenreader-Nutzer) komplett von der Nutzung ausschließen.",
+                solution="Kritische axe-core-Verstöße vorrangig beheben, siehe Detail-Report je Regel-ID."))
+        else:
+            findings.append(finding("A11-01", "POSITIV", "Keine kritischen WCAG-Verstöße gefunden",
+                "Kein Ausschluss von Nutzergruppen durch kritische Barrieren erkannt."))
+
+        # A11-02 schwerwiegende WCAG-Verstöße
         if counts["serious"] > 0:
-            issues.append(f"{counts['serious']} schwerwiegende Barrierefreiheits-Verstöße")
+            findings.append(finding("A11-02", "HOCH", f"{counts['serious']} schwerwiegende Barrierefreiheits-Verstöße",
+                "Schwerwiegende Verstöße erschweren die Nutzung für Menschen mit Behinderung erheblich, ohne sie komplett auszuschließen.",
+                solution="Schwerwiegende axe-core-Verstöße beheben, siehe Detail-Report je Regel-ID."))
+        else:
+            findings.append(finding("A11-02", "POSITIV", "Keine schwerwiegenden WCAG-Verstöße gefunden",
+                "Kein erheblicher Nutzungsnachteil durch schwerwiegende Barrieren erkannt."))
+
+        # A11-03 Bilder ohne Alt-Text
         if images_without_alt > 0:
-            issues.append(f"{images_without_alt} Bild(er) ohne Alt-Text")
+            findings.append(finding("A11-03", "MITTEL", f"{images_without_alt} Bild(er) ohne Alt-Text",
+                "Screenreader können den Bildinhalt nicht wiedergeben — für blinde/sehbehinderte Nutzer nicht zugänglich.",
+                solution='alt-Attribut für jedes Bild ergänzen (leer alt="" nur bei rein dekorativen Bildern).'))
+        else:
+            findings.append(finding("A11-03", "POSITIV", "Alle Bilder haben ein Alt-Attribut",
+                "Bildinhalte sind für Screenreader zugänglich."))
+
+        # A11-04 Formularfelder ohne Label
         if unlabeled_inputs > 0:
-            issues.append(f"{unlabeled_inputs} Formularfeld(er) ohne Label")
+            findings.append(finding("A11-04", "MITTEL", f"{unlabeled_inputs} Formularfeld(er) ohne Label",
+                "Ohne Label wissen Screenreader-Nutzer nicht, wofür ein Eingabefeld gedacht ist.",
+                solution="<label for=\"...\">, aria-label oder aria-labelledby für jedes Formularfeld ergänzen."))
+        else:
+            findings.append(finding("A11-04", "POSITIV", "Alle Formularfelder sind beschriftet",
+                "Formularfelder sind für Screenreader eindeutig zuordenbar."))
+
+        # A11-05 generische Linktexte
         if generic_link_texts:
-            issues.append(f"Generische Linktexte gefunden: {', '.join(set(generic_link_texts))}")
+            findings.append(finding("A11-05", "MITTEL", f"Generische Linktexte gefunden: {', '.join(set(generic_link_texts))}",
+                "Generische Linktexte wie 'hier klicken' geben Screenreader-Nutzern, die eine Linkliste durchgehen, keinen Kontext.",
+                solution="Linktexte so formulieren, dass sie auch isoliert (ohne umgebenden Text) verständlich sind."))
+        else:
+            findings.append(finding("A11-05", "POSITIV", "Keine generischen Linktexte gefunden",
+                "Linktexte sind auch außerhalb ihres Kontexts verständlich."))
+
+        # A11-06 Überschriften-Hierarchie
         if heading_hierarchy_issues:
-            issues.append(f"Überschriften-Hierarchie-Probleme: {'; '.join(heading_hierarchy_issues[:3])}")
+            findings.append(finding("A11-06", "MITTEL", f"Überschriften-Hierarchie-Probleme: {'; '.join(heading_hierarchy_issues[:3])}",
+                "Übersprungene Überschriften-Ebenen erschweren Screenreader-Nutzern die Orientierung in der Seitenstruktur.",
+                solution="Überschriften-Ebenen ohne Sprünge verwenden (z.B. nicht direkt von H1 zu H3)."))
+        else:
+            findings.append(finding("A11-06", "POSITIV", "Überschriften-Hierarchie ist konsistent",
+                "Klare, sprungfreie Seitenstruktur für Screenreader-Nutzer."))
+
+        # A11-07 Focus-Outline
         if focus_outline_suppressed:
-            issues.append("Focus-Outline unterdrückt (outline:none/0 in CSS)")
+            findings.append(finding("A11-07", "MITTEL", "Focus-Outline unterdrückt (outline:none/0 in CSS)",
+                "Tastatur-Nutzer sehen nicht mehr, welches Element gerade fokussiert ist.",
+                solution="outline nicht komplett entfernen, sondern durch einen sichtbaren, kontraststarken Fokus-Stil ersetzen."))
+        else:
+            findings.append(finding("A11-07", "POSITIV", "Focus-Outline ist nicht unterdrückt",
+                "Tastatur-Nutzer können den aktuellen Fokus erkennen."))
+
+        # A11-08 HTML lang-Attribut
         if not lang_attribute:
-            issues.append("HTML lang-Attribut fehlt")
+            findings.append(finding("A11-08", "MITTEL", "HTML lang-Attribut fehlt",
+                "Ohne lang-Attribut wählen Screenreader ggf. die falsche Sprachausgabe/Aussprache.",
+                solution="lang-Attribut am <html>-Tag setzen, z.B. lang=\"de\"."))
+        else:
+            findings.append(finding("A11-08", "POSITIV", f"HTML lang-Attribut gesetzt ({lang_attribute})",
+                "Screenreader wählen die korrekte Sprachausgabe."))
 
         return {
             "violations": violations,
@@ -115,7 +166,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
                 "focus_outline_suppressed": focus_outline_suppressed,
                 "lang_attribute": lang_attribute,
             },
-            "issues": issues,
+            "findings": findings,
         }
     except Exception as e:
         return {"error": str(e)}
