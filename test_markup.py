@@ -1,4 +1,4 @@
-"""Assert-based smoke test for auditor.checks.markup. Run: python test_markup.py"""
+"""Assert-based smoke test for auditor.checks.markup. Run: uv run python test_markup.py"""
 from unittest.mock import patch, MagicMock
 from bs4 import BeautifulSoup
 from auditor.checks import markup
@@ -12,7 +12,7 @@ def _mock_response(json_body, status_code=200):
     return r
 
 
-def test_errors_populate_issues():
+def test_errors_populate_findings():
     body = {"messages": [
         {"type": "error", "message": "Element head is missing a required instance of child element title.", "lastLine": 3},
         {"type": "info", "subType": "warning", "message": "minor nit"},
@@ -21,15 +21,18 @@ def test_errors_populate_issues():
         result = markup.run("https://tobeworks.de", "<html></html>", BeautifulSoup("", "lxml"), {})
     assert result["error_count"] == 1
     assert result["warning_count"] == 1
-    assert len(result["issues"]) == 1
-    assert "title" in result["issues"][0]
+    findings = [f for f in result["findings"] if f["id"] == "MKP-01"]
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "MITTEL"
+    assert "title" in findings[0]["finding"]
 
 
-def test_clean_page_has_no_issues():
+def test_clean_page_has_positiv_finding():
     with patch("httpx.post", return_value=_mock_response({"messages": []})):
         result = markup.run("https://tobeworks.de", "<html></html>", BeautifulSoup("", "lxml"), {})
     assert result["error_count"] == 0
-    assert result["issues"] == []
+    f = next(f for f in result["findings"] if f["id"] == "MKP-01")
+    assert f["severity"] == "POSITIV"
 
 
 def test_network_failure_returns_error_key():
@@ -39,7 +42,7 @@ def test_network_failure_returns_error_key():
 
 
 if __name__ == "__main__":
-    test_errors_populate_issues()
-    test_clean_page_has_no_issues()
+    test_errors_populate_findings()
+    test_clean_page_has_positiv_finding()
     test_network_failure_returns_error_key()
     print("test_markup: all tests passed")
