@@ -12,3 +12,4 @@ __pycache__/
 .site-auditor.yml
 .env
 .DS_Store
+./docs
