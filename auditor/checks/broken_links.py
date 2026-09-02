@@ -3,6 +3,8 @@ import httpx
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
 
+from auditor.findings import finding
+
 
 async def _check_links(links: list[str]) -> tuple[list, list, list]:
     broken = []
@@ -20,7 +22,6 @@ async def _check_links(links: list[str]) -> tuple[list, list, list]:
                     elif r.status_code in range(300, 400):
                         redirected.append({"url": url, "status": r.status_code, "location": r.headers.get("location", "")})
                     elif r.status_code == 200:
-                        # Soft-404 check: GET and count words
                         try:
                             rg = await client.get(url, timeout=5)
                             from bs4 import BeautifulSoup as BS
@@ -39,7 +40,7 @@ async def _check_links(links: list[str]) -> tuple[list, list, list]:
 
 def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
     try:
-        issues = []
+        findings = []
         hostname = urlparse(url).netloc
 
         all_links = []
@@ -55,12 +56,24 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
         total_links = len(all_links)
         to_check = all_links[:50]
 
-        broken, redirected, soft_404 = asyncio.run(_check_links(to_check))
+        broken, redirected, soft_404 = asyncio.run(_check_links(to_check)) if to_check else ([], [], [])
 
-        if broken:
-            issues.append(f"{len(broken)} defekte(r) Link(s) gefunden")
-        if soft_404:
-            issues.append(f"{len(soft_404)} mögliche Soft-404-Seite(n) gefunden")
+        if to_check:
+            if broken:
+                findings.append(finding("LNK-01", "MITTEL", f"{len(broken)} defekte(r) Link(s) gefunden",
+                    "Defekte interne Links verschwenden Crawl-Budget und führen Besucher ins Leere.",
+                    solution="Defekte Links korrigieren oder entfernen."))
+            else:
+                findings.append(finding("LNK-01", "POSITIV", "Keine defekten Links gefunden",
+                    "Alle geprüften internen Links sind erreichbar."))
+
+            if soft_404:
+                findings.append(finding("LNK-02", "MITTEL", f"{len(soft_404)} mögliche Soft-404-Seite(n) gefunden",
+                    "Seiten mit HTTP 200 aber kaum Inhalt werden von Suchmaschinen oft trotzdem als Fehlerseite erkannt und schlecht bewertet.",
+                    solution="Prüfen, ob diese Seiten echten Inhalt liefern sollten oder auf 404/410 umgestellt werden müssen."))
+            else:
+                findings.append(finding("LNK-02", "POSITIV", "Keine Soft-404-Verdachtsfälle unter den geprüften Links",
+                    "Geprüfte Links liefern entweder Fehlercodes oder ausreichend Inhalt."))
 
         return {
             "total_links": total_links,
@@ -68,7 +81,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
             "broken_links": broken,
             "redirected_links": redirected,
             "soft_404_candidates": soft_404,
-            "issues": issues,
+            "findings": findings,
         }
     except Exception as e:
         return {"error": str(e)}
