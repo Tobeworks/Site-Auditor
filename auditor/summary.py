@@ -7,16 +7,16 @@ OnProgress = Callable[[str, str], None]
 def _build_context(url: str, results: dict) -> str:
     lines = [f"Website: {url}\n"]
 
-    # All issues per module
+    # All non-POSITIV findings per module
     lines.append("=== GEFUNDENE PROBLEME PRO BEREICH ===")
     for module, data in results.items():
         if not isinstance(data, dict):
             continue
-        issues = data.get("issues", [])
-        if issues:
+        problems = [f for f in data.get("findings", []) if f["severity"] != "POSITIV"]
+        if problems:
             lines.append(f"\n[{module.upper()}]")
-            for issue in issues:
-                lines.append(f"  - {issue}")
+            for f in problems:
+                lines.append(f"  - [{f['severity']}] {f['finding']} (Lösung: {f['solution']})")
 
     lines.append("\n=== TECHNISCHE KENNZAHLEN ===")
 

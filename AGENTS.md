@@ -218,6 +218,12 @@ On exception, every module returns:
 
 No check may crash the whole runner.
 
+Every module's `"issues": list[str]` field was replaced by `"findings": list[Finding]` — see
+`docs/superpowers/specs/2026-09-02-findings-model-and-new-checks-design.md` and `auditor/findings.py`
+for the full model (`id`, `severity`, `finding`, `impact`, `solution`, `effort_days`, `timeframe`).
+Each module has its own Kennung prefix (`SEO`, `SDA`, `PRF`, `SEC`, `HST`, `SOC`, `LNK`, `MKP`, `TCH`,
+`WPR`, `WPD`, `DNS`, `CNT`, `LGL`, `A11`), numbered sequentially per module (`SEO-01`, `SEO-02`, …).
+
 ---
 
 ## runner.py
@@ -322,7 +328,8 @@ Output:
   "is_wordpress": bool,
   "version": str | None,
   "theme": str | None,
-  "plugins": list[str]
+  "plugins": list[str],
+  "findings": list[Finding]  # always [] — informational module
 }
 ```
 
@@ -380,7 +387,7 @@ Output:
   "woocommerce_detected": bool,
   "woocommerce_version": str | None,
   "woocommerce_api_public": bool,
-  "issues": list[str]
+  "findings": list[Finding]
 }
 ```
 
@@ -429,7 +436,7 @@ Output:
   "favicon_found": bool,
   "apple_touch_icon_found": bool,
   "web_app_manifest_found": bool,
-  "issues": list[str]
+  "findings": list[Finding]
 }
 ```
 
@@ -497,7 +504,7 @@ Output:
   "cookies_missing_httponly": list[str],
   "cookies_missing_samesite": list[str],
   "external_scripts_without_sri": list[str],
-  "issues": list[str]
+  "findings": list[Finding]
 }
 ```
 
@@ -591,7 +598,7 @@ Output:
   "etag_present": bool,
   "preconnect_hints": list[str],
   "missing_preconnects": list[str],
-  "issues": list[str]
+  "findings": list[Finding]
 }
 ```
 
@@ -616,7 +623,7 @@ Output:
   "broken_links": list[{"url": str, "status": int}],
   "redirected_links": list[{"url": str, "status": int, "location": str}],
   "soft_404_candidates": list[str],
-  "issues": list[str]
+  "findings": list[Finding]
 }
 ```
 
@@ -675,7 +682,7 @@ Output:
     "focus_outline_suppressed": bool,
     "lang_attribute": str | None
   },
-  "issues": list[str]
+  "findings": list[Finding]
 }
 ```
 
@@ -718,7 +725,7 @@ Output:
   "microdata_types": list[str],
   "twitter_card": str | None,
   "twitter_title": str | None,
-  "issues": list[str]
+  "findings": list[Finding]
 }
 ```
 
@@ -745,7 +752,7 @@ Output:
   "warnings": list[dict],
   "error_count": int,
   "warning_count": int,
-  "issues": list[str],
+  "findings": list[Finding],
 }
 ```
 
@@ -796,7 +803,7 @@ Output:
   "cookie_solution": str | None,
   "tracking_in_html": list[str],
   "third_party_domains": list[{"domain": str, "category": str}],
-  "issues": list[str]
+  "findings": list[Finding]
 }
 ```
 
@@ -827,7 +834,7 @@ Output:
   "cache_layer": str | None,
   "jquery_version": str | None,
   "page_builder": str | None,
-  "issues": list[str]
+  "findings": list[Finding]
 }
 ```
 
@@ -874,7 +881,7 @@ Output:
   "robots_wp_admin_blocked": bool,
   "robots_sitemap_referenced": bool,
   "feed_urls": list[str],
-  "issues": list[str]
+  "findings": list[Finding]
 }
 ```
 
@@ -931,7 +938,7 @@ Output:
   "powered_by_version_exposed": bool,
   "shodan_open_ports": list[int],
   "shodan_vulns": list[str],
-  "issues": list[str]
+  "findings": list[Finding]
 }
 ```
 
@@ -1021,7 +1028,7 @@ Output:
   "bimi_found": bool,
   "bimi_logo_url": str | None,
   "mta_sts_found": bool,
-  "issues": list[str]
+  "findings": list[Finding]
 }
 ```
 
@@ -1047,7 +1054,7 @@ Output:
   "avg_sentence_length": float,
   "readability_hint": str,
   "broken_images": list[{"src": str, "status": int}],
-  "issues": list[str]
+  "findings": list[Finding]
 }
 ```
 

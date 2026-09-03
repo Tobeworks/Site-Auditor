@@ -34,8 +34,23 @@ def test_on_progress_callback_fires():
     assert any(n == "done" for n, _ in calls)
 
 
+def test_wordpress_result_has_findings_key():
+    """Every check module (wordpress always runs regardless of skip) must expose
+    'findings', not the old 'issues' — this is the cross-module contract from
+    docs/superpowers/specs/2026-09-02-findings-model-and-new-checks-design.md."""
+    fake_html = "<html><head><title>t</title></head><body></body></html>"
+    with patch.object(runner, "_fetch", return_value=(fake_html, {}, 42)):
+        all_checks = ["wordpress_deep", "seo", "security", "performance", "broken_links",
+                      "structured_data", "markup", "legal", "tech_stack", "social",
+                      "hosting", "dns", "content_quality", "a11y"]
+        results = runner.run_audit("https://tobeworks.de", skip=all_checks)
+    assert "findings" in results["wordpress"]
+    assert "issues" not in results["wordpress"]
+
+
 if __name__ == "__main__":
     test_no_rich_import_in_runner()
     test_run_audit_silent_returns_dict()
     test_on_progress_callback_fires()
+    test_wordpress_result_has_findings_key()
     print("test_runner_silent: all tests passed")

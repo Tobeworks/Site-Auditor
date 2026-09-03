@@ -226,7 +226,7 @@ Each report contains:
 3. **Critical Issues** — cross-module list of highest severity findings
 4. **Module Sections** — detailed findings per module with tables, issues, and successes
 
-Status indicators: ✅ no issues · ⚠️ 1–2 issues · 🔴 3+ or critical · ⚪ module error
+Status indicators: ✅ nur positive Findings · ⚠️ mindestens ein MITTEL-Finding · 🔴 mindestens ein HOCH- oder KRITISCH-Finding · ⚪ Modulfehler. Jedes Finding trägt eine Kennung (z.B. `SEO-04`), einen Schweregrad, einen Befund-, Wirkungs- und Lösungstext.
 
 ---
 
@@ -245,7 +245,7 @@ site-auditor/
 └── pyproject.toml
 ```
 
-Each check module returns a dict, always including an `"issues"` list (or an `"error"` key on failure) — see any file in `auditor/checks/` for the pattern.
+Each check module returns a dict, always including a `"findings"` list of `Finding` objects (id/severity/finding/impact/solution — see `auditor/findings.py`), or an `"error"` key on failure — see any file in `auditor/checks/` for the pattern.
 
 ---
 
