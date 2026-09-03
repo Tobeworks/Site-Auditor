@@ -4,15 +4,17 @@ from datetime import datetime
 from urllib.parse import urlparse
 from auditor import __version__
 
+SEVERITY_ICON = {"KRITISCH": "🔴", "HOCH": "🟠", "MITTEL": "⚠️", "POSITIV": "✅"}
+SEVERITY_ORDER = ["KRITISCH", "HOCH", "MITTEL", "POSITIV"]
 
-def _status(issues: list, error: bool = False) -> str:
+
+def _status(findings: list, error: bool = False) -> str:
     if error:
         return "⚪"
-    n = len(issues)
-    critical = any("kritisch" in i.lower() or "🔴" in i for i in issues)
-    if critical or n >= 3:
+    severities = {f["severity"] for f in findings}
+    if "KRITISCH" in severities or "HOCH" in severities:
         return "🔴"
-    if n >= 1:
+    if "MITTEL" in severities:
         return "⚠️"
     return "✅"
 
@@ -21,14 +23,18 @@ def _section_header(title: str) -> str:
     return f"\n## {title}\n"
 
 
-def _issues_list(issues: list) -> str:
-    if not issues:
-        return "✅ Keine Issues gefunden.\n"
+def _findings_list(findings: list) -> str:
+    if not findings:
+        return "✅ Keine Findings.\n"
     lines = []
-    for issue in issues:
-        prefix = "🔴" if ("kritisch" in issue.lower() or "🔴" in issue) else "⚠️"
-        clean = issue.replace("🔴 KRITISCH: ", "").replace("🔴", "").strip()
-        lines.append(f"- {prefix} {clean}")
+    for sev in SEVERITY_ORDER:
+        for f in findings:
+            if f["severity"] != sev:
+                continue
+            lines.append(f"- {SEVERITY_ICON[sev]} **[{f['id']}]** {f['finding']}")
+            if sev != "POSITIV":
+                lines.append(f"  - *Wirkung:* {f['impact']}")
+                lines.append(f"  - *Lösung:* {f['solution']}")
     return "\n".join(lines) + "\n"
 
 
@@ -40,44 +46,39 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
     if fmt == "json":
         return json.dumps({"url": url, "date": date_str, "results": results}, indent=2, ensure_ascii=False, default=str)
 
-    # Collect all issues across modules for critical section
-    all_issues = []
+    # Collect KRITISCH/HOCH findings across modules for the critical section
+    critical_findings = []
     for module, data in results.items():
-        if isinstance(data, dict) and "issues" in data:
-            for issue in data["issues"]:
-                all_issues.append((module, issue))
+        if isinstance(data, dict) and "findings" in data:
+            for f in data["findings"]:
+                if f["severity"] in ("KRITISCH", "HOCH"):
+                    critical_findings.append((module, f))
+    critical_findings.sort(key=lambda mf: 0 if mf[1]["severity"] == "KRITISCH" else 1)
 
     lines = []
     lines.append(f"# Site Audit: {url}")
     lines.append(f"Erstellt: {date_str}\n")
 
-    # AI summary
     if ai_summary:
-        #lines.append("## Zusammenfassung für Laien\n")
         lines.append(ai_summary)
-        #lines.append("\n*Dieser Text wurde automatisch von einer KI erstellt und dient nur zur Orientierung.*\n")
 
-    # Executive summary table
     lines.append("## Executive Summary\n")
     lines.append("| Modul | Status | Issues |")
     lines.append("|---|---|---|")
 
     module_order = [
-        # SEO & Content first — highest priority for clients
         ("seo", "SEO"),
         ("content_quality", "Content & Struktur"),
         ("structured_data", "Structured Data"),
         ("markup", "HTML Markup"),
         ("social", "Social & Crawlability"),
         ("performance", "Performance"),
-        # Security & Infrastructure
         ("security", "Security"),
         ("broken_links", "Broken Links"),
         ("wordpress", "WordPress"),
         ("wordpress_deep", "WordPress Details"),
         ("a11y", "Accessibility"),
         ("legal", "Legal"),
-        # Technical background
         ("hosting", "Hosting & Server"),
         ("dns", "DNS"),
         ("tech_stack", "Tech Stack"),
@@ -90,24 +91,21 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
         if "error" in data:
             lines.append(f"| {label} | ⚪ | - |")
         else:
-            issues = data.get("issues", [])
-            status = _status(issues)
-            lines.append(f"| {label} | {status} | {len(issues)} |")
+            findings = data.get("findings", [])
+            status = _status(findings)
+            problem_count = sum(1 for f in findings if f["severity"] != "POSITIV")
+            lines.append(f"| {label} | {status} | {problem_count} |")
 
     lines.append("")
 
-    # Critical issues
-    critical = [(m, i) for m, i in all_issues if "kritisch" in i.lower() or "🔴" in i]
-    if critical:
+    if critical_findings:
         lines.append("## 🔴 Kritische Issues\n")
-        for module, issue in critical:
-            clean = issue.replace("🔴 KRITISCH: ", "").replace("🔴", "").strip()
-            lines.append(f"- **[{module}]** {clean}")
+        for module, f in critical_findings:
+            lines.append(f"- {SEVERITY_ICON[f['severity']]} **[{f['id']}]** [{module}] {f['finding']}")
         lines.append("")
 
     # ── Sections ── (same order as module_order above)
 
-    # SEO
     if "seo" in results:
         lines.append(_section_header("SEO"))
         d = results["seo"]
@@ -125,9 +123,8 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
             lines.append(f"| HTML lang | {d.get('lang') or '❌ fehlt'} |")
             lines.append(f"| Favicon | {'✅' if d.get('favicon_found') else '❌'} |")
             lines.append("")
-            lines.append(_issues_list(d.get("issues", [])))
+            lines.append(_findings_list(d.get("findings", [])))
 
-    # Content & Struktur
     if "content_quality" in results:
         lines.append(_section_header("Content & Struktur"))
         d = results["content_quality"]
@@ -142,9 +139,8 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
             lines.append(f"| Lesbarkeit | {d.get('readability_hint', '-')} |")
             lines.append(f"| Defekte Bilder | {len(d.get('broken_images', []))} |")
             lines.append("")
-            lines.append(_issues_list(d.get("issues", [])))
+            lines.append(_findings_list(d.get("findings", [])))
 
-    # Structured Data
     if "structured_data" in results:
         lines.append(_section_header("Structured Data"))
         d = results["structured_data"]
@@ -155,14 +151,8 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
             lines.append(f"**JSON-LD Schemas:** {', '.join(types) if types else '❌ Keine – Google kann keine Rich Results anzeigen'}\n")
             if d.get("microdata_types"):
                 lines.append(f"**Microdata:** {', '.join(d['microdata_types'])}\n")
-            if d.get("json_ld_field_issues"):
-                lines.append("**Fehlende Pflichtfelder:**")
-                for fi in d["json_ld_field_issues"]:
-                    lines.append(f"- ⚠️ {fi}")
-                lines.append("")
-            lines.append(_issues_list(d.get("issues", [])))
+            lines.append(_findings_list(d.get("findings", [])))
 
-    # HTML Markup
     if "markup" in results:
         lines.append(_section_header("HTML Markup"))
         d = results["markup"]
@@ -170,9 +160,8 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
             lines.append(f"⚪ Fehler: {d['error']}\n")
         else:
             lines.append(f"**W3C-Validierung:** {d.get('error_count', 0)} Fehler, {d.get('warning_count', 0)} Warnungen\n")
-            lines.append(_issues_list(d.get("issues", [])))
+            lines.append(_findings_list(d.get("findings", [])))
 
-    # Social & Crawlability
     if "social" in results:
         lines.append(_section_header("Social & Crawlability"))
         d = results["social"]
@@ -187,9 +176,8 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
             lines.append(f"| Hreflang | {len(d.get('hreflang_tags', []))} Tags |")
             lines.append(f"| Feed | {', '.join(d.get('feed_urls', [])) or '-'} |")
             lines.append("")
-            lines.append(_issues_list(d.get("issues", [])))
+            lines.append(_findings_list(d.get("findings", [])))
 
-    # Performance
     if "performance" in results:
         lines.append(_section_header("Performance"))
         d = results["performance"]
@@ -203,6 +191,7 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
             lines.append(f"| HTTP-Version | {d.get('http_version', '-')} |")
             lines.append(f"| Komprimierung | {d.get('compression_type') or '❌ keine'} |")
             lines.append(f"| Cache-Control | {'✅' if d.get('cache_control_present') else '❌'} |")
+            lines.append(f"| CDN | {d.get('cdn_detected') or '-'} |")
             if d.get("performance_score") is not None:
                 lines.append(f"| Lighthouse Score | {d['performance_score']}/100 |")
                 lines.append(f"| LCP | {d.get('lcp', '-')}s |")
@@ -215,9 +204,13 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
                 for opp in d["opportunities"]:
                     lines.append(f"- {opp['title']} (~{opp['savings_ms']}ms Ersparnis)")
                 lines.append("")
-            lines.append(_issues_list(d.get("issues", [])))
+            if d.get("largest_assets"):
+                lines.append("**Größte Assets:**")
+                for a in d["largest_assets"]:
+                    lines.append(f"- `{a['url']}` ({round(a['bytes'] / 1024)} KB)")
+                lines.append("")
+            lines.append(_findings_list(d.get("findings", [])))
 
-    # Security
     if "security" in results:
         lines.append(_section_header("Security"))
         d = results["security"]
@@ -242,9 +235,8 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
                 for s in d["external_scripts_without_sri"][:5]:
                     lines.append(f"- `{s}`")
                 lines.append("")
-            lines.append(_issues_list(d.get("issues", [])))
+            lines.append(_findings_list(d.get("findings", [])))
 
-    # Broken Links
     if "broken_links" in results:
         lines.append(_section_header("Broken Links"))
         d = results["broken_links"]
@@ -262,9 +254,8 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
                 for u in d["soft_404_candidates"][:5]:
                     lines.append(f"- `{u}`")
                 lines.append("")
-            lines.append(_issues_list(d.get("issues", [])))
+            lines.append(_findings_list(d.get("findings", [])))
 
-    # WordPress
     if "wordpress" in results:
         lines.append(_section_header("WordPress"))
         d = results["wordpress"]
@@ -283,7 +274,6 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
                     lines.append(f"| Plugin-Liste | {', '.join(d['plugins'][:10])} |")
                 lines.append("")
 
-    # WordPress Deep
     if "wordpress_deep" in results:
         lines.append(_section_header("WordPress Details"))
         d = results["wordpress_deep"]
@@ -302,9 +292,8 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
                 lines.append(f"| WooCommerce | ✅ Erkannt (v{d.get('woocommerce_version') or '?'}) |")
                 lines.append(f"| WC-API öffentlich | {'🔴 JA' if d.get('woocommerce_api_public') else '✅'} |")
             lines.append("")
-            lines.append(_issues_list(d.get("issues", [])))
+            lines.append(_findings_list(d.get("findings", [])))
 
-    # Accessibility
     if "a11y" in results:
         lines.append(_section_header("Accessibility"))
         d = results["a11y"]
@@ -319,14 +308,8 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
             lines.append(f"| Mittel | {vc.get('moderate', 0)} |")
             lines.append(f"| Gering | {vc.get('minor', 0)} |")
             lines.append("")
-            mc = d.get("manual_checks", {})
-            lines.append(f"- Bilder ohne Alt-Text: {mc.get('images_without_alt', 0)}")
-            lines.append(f"- Unlabeled Inputs: {mc.get('unlabeled_inputs', 0)}")
-            lines.append(f"- Focus-Outline unterdrückt: {'ja' if mc.get('focus_outline_suppressed') else 'nein'}")
-            lines.append("")
-            lines.append(_issues_list(d.get("issues", [])))
+            lines.append(_findings_list(d.get("findings", [])))
 
-    # Legal
     if "legal" in results:
         lines.append(_section_header("Legal"))
         d = results["legal"]
@@ -347,10 +330,9 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
                 for tp in d["third_party_domains"][:10]:
                     lines.append(f"- `{tp['domain']}` ({tp['category']})")
                 lines.append("")
-            lines.append(_issues_list(d.get("issues", [])))
+            lines.append(_findings_list(d.get("findings", [])))
             lines.append("> *Dieser Check ersetzt keine rechtliche Prüfung. Befunde sind technische Hinweise, keine Rechtsberatung.*\n")
 
-    # Hosting & Server
     if "hosting" in results:
         lines.append(_section_header("Hosting & Server"))
         d = results["hosting"]
@@ -365,14 +347,15 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
             lines.append(f"| ASN | {d.get('asn', '-')} |")
             lines.append(f"| Standort | {', '.join(filter(None, [d.get('city'), d.get('country')])) or '-'} |")
             lines.append(f"| Server-Header | {d.get('server_header') or '-'} |")
+            if d.get("php_version"):
+                lines.append(f"| PHP-Version | {d['php_version']}{' (EOL: ' + d['php_eol_date'] + ')' if d.get('php_eol_date') else ''} |")
             if d.get("shodan_open_ports"):
                 lines.append(f"| Offene Ports (Shodan) | {', '.join(str(p) for p in d['shodan_open_ports'])} |")
             if d.get("shodan_vulns"):
                 lines.append(f"| CVEs (Shodan) | {', '.join(d['shodan_vulns'])} |")
             lines.append("")
-            lines.append(_issues_list(d.get("issues", [])))
+            lines.append(_findings_list(d.get("findings", [])))
 
-    # DNS
     if "dns" in results:
         lines.append(_section_header("DNS"))
         d = results["dns"]
@@ -396,9 +379,8 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
             lines.append(f"| BIMI | {'✅' if d.get('bimi_found') else '❌'} |")
             lines.append(f"| MTA-STS | {'✅' if d.get('mta_sts_found') else '❌'} |")
             lines.append("")
-            lines.append(_issues_list(d.get("issues", [])))
+            lines.append(_findings_list(d.get("findings", [])))
 
-    # Tech Stack
     if "tech_stack" in results:
         lines.append(_section_header("Tech Stack"))
         d = results["tech_stack"]
@@ -413,7 +395,6 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
             lines.append(f"| jQuery | {d.get('jquery_version') or '-'} |")
             lines.append(f"| Page Builder | {d.get('page_builder') or '-'} |")
             lines.append("")
-            lines.append(_issues_list(d.get("issues", [])))
 
     lines.append("\n---")
     lines.append(f"*Generiert mit Tobeworks Site Auditor v{__version__}*")
@@ -428,7 +409,6 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
 
 
 def _md_to_simple_html(md: str, url: str, date_str: str) -> str:
-    import re
     html_lines = [
         "<!DOCTYPE html><html lang='de'><head>",
         "<meta charset='UTF-8'>",
