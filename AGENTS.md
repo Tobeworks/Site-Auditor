@@ -60,8 +60,25 @@ site-auditor/
 │       ├── dns.py
 │       └── content_quality.py
 ├── main.py                 # legacy entry point: `python main.py <url>`, delegates to auditor.cli
-├── test_markup.py            # assert-based smoke test for checks/markup.py
-├── test_runner_silent.py       # assert-based smoke test for runner.run_audit()
+├── test/
+│   ├── test_markup.py            # assert-based smoke test for checks/markup.py
+│   ├── test_runner_silent.py       # assert-based smoke test for runner.run_audit()
+│   ├── test_findings.py
+│   ├── test_seo.py
+│   ├── test_structured_data.py
+│   ├── test_security.py
+│   ├── test_performance.py
+│   ├── test_social.py
+│   ├── test_hosting.py
+│   ├── test_content_quality.py
+│   ├── test_broken_links.py
+│   ├── test_tech_stack.py
+│   ├── test_wordpress.py
+│   ├── test_wordpress_deep.py
+│   ├── test_dns.py
+│   ├── test_legal.py
+│   ├── test_a11y.py
+│   └── test_report.py
 └── pyproject.toml
 ```
 
