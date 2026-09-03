@@ -43,8 +43,13 @@ def _validate_hreflang(value: str) -> bool:
     parts = value.split("-")
     if parts[0].lower() not in ISO_639_1:
         return False
-    if len(parts) > 1 and parts[1].lower() not in ISO_3166_1:
-        return False
+    if len(parts) > 1:
+        sub = parts[1]
+        # BCP-47: 4 Buchstaben = Script-Subtag (z. B. zh-Hant) — Form genügt, keine Liste
+        if len(sub) == 4 and sub.isalpha():
+            return True
+        if sub.lower() not in ISO_3166_1:
+            return False
     return True
 
 
@@ -214,12 +219,12 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
         # SOC-07 hreflang ISO-Validität
         invalid_hreflang = [t["lang"] for t in hreflang_tags if not _validate_hreflang(t["lang"])]
         if invalid_hreflang:
-            findings.append(finding("SOC-07", "MITTEL", f"Ungültige hreflang-Kombination(en): {', '.join(invalid_hreflang)}",
-                "Suchmaschinen ignorieren hreflang-Werte mit ungültiger Sprach-/Ländercode-Kombination — die internationale Ausrichtung greift für diese Einträge nicht.",
-                solution="Sprach-/Ländercode gegen ISO-639-1 (Sprache) und ISO-3166-1 (Land) prüfen und korrigieren."))
+            findings.append(finding("SOC-07", "MITTEL", f"Unbekannter Sprach-/Ländercode in hreflang: {', '.join(invalid_hreflang)}",
+                "Der Wert enthält einen Code, den es in ISO-639-1 (Sprache) bzw. ISO-3166-1 (Land) nicht gibt — Suchmaschinen ignorieren solche Einträge, die internationale Ausrichtung greift dafür nicht.",
+                solution="Betroffene Codes gegen ISO-639-1 (Sprache) und ISO-3166-1 alpha-2 (Land) prüfen und auf die korrekte Schreibweise korrigieren."))
         elif hreflang_tags:
-            findings.append(finding("SOC-07", "POSITIV", "Alle hreflang-Kombinationen sind gültig",
-                "Sprach-/Ländercodes entsprechen ISO-639-1/ISO-3166-1."))
+            findings.append(finding("SOC-07", "POSITIV", "Alle hreflang-Codes sind bekannte ISO-Codes",
+                "Sprach-, Länder- und Script-Codes der hreflang-Einträge entsprechen ISO-639-1/ISO-3166-1 bzw. gültigen BCP-47-Script-Subtags."))
 
         # SOC-08 hreflang x-default
         if hreflang_tags:

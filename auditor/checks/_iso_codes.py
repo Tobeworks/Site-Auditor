@@ -1,9 +1,9 @@
-"""ISO-639-1 language codes and a common subset of ISO-3166-1 alpha-2 country
-codes, used to validate hreflang values in social.py.
+"""ISO-639-1 language codes and ISO-3166-1 alpha-2 country codes,
+used to validate hreflang values in social.py.
 
-ISO_639_1 is the complete 184-code set. ISO_3166_1 covers the ~90 most
-common country codes, not the full 249 — extend as needed if an audit
-flags a false positive for a legitimate, less common region code."""
+ISO_639_1 is the complete 184-code set, ISO_3166_1 the complete 249-code set
+(alpha-2, ISO 3166-1 as of 2026-09). Both are static data blobs — no live lookup
+by design; update by hand if the standard adds or retires a code."""
 
 ISO_639_1 = {
     "aa", "ab", "ae", "af", "ak", "am", "an", "ar", "as", "av", "ay", "az",
@@ -35,10 +35,25 @@ ISO_639_1 = {
 }
 
 ISO_3166_1 = {
-    "us", "gb", "de", "fr", "es", "it", "pt", "nl", "be", "ch", "at", "se", "no", "dk", "fi",
-    "ie", "pl", "cz", "sk", "hu", "ro", "bg", "gr", "hr", "si", "ee", "lv", "lt", "lu", "mt", "cy", "is",
-    "ca", "mx", "br", "ar", "cl", "co", "pe", "uy", "ve", "ec", "bo", "py",
-    "cn", "jp", "kr", "in", "id", "th", "vn", "ph", "my", "sg", "tw", "hk", "pk", "bd",
-    "au", "nz",
-    "ru", "ua", "by", "kz", "tr", "il", "sa", "ae", "eg", "za", "ng", "ke", "ma", "tn", "dz",
+    "ad", "ae", "af", "ag", "ai", "al", "am", "ao", "aq", "ar", "as", "at",
+    "au", "aw", "ax", "az", "ba", "bb", "bd", "be", "bf", "bg", "bh", "bi",
+    "bj", "bl", "bm", "bn", "bo", "bq", "br", "bs", "bt", "bv", "bw", "by",
+    "bz", "ca", "cc", "cd", "cf", "cg", "ch", "ci", "ck", "cl", "cm", "cn",
+    "co", "cr", "cu", "cv", "cw", "cx", "cy", "cz", "de", "dj", "dk", "dm",
+    "do", "dz", "ec", "ee", "eg", "eh", "er", "es", "et", "fi", "fj", "fk",
+    "fm", "fo", "fr", "ga", "gb", "gd", "ge", "gf", "gg", "gh", "gi", "gl",
+    "gm", "gn", "gp", "gq", "gr", "gs", "gt", "gu", "gw", "gy", "hk", "hm",
+    "hn", "hr", "ht", "hu", "id", "ie", "il", "im", "in", "io", "iq", "ir",
+    "is", "it", "je", "jm", "jo", "jp", "ke", "kg", "kh", "ki", "km", "kn",
+    "kp", "kr", "kw", "ky", "kz", "la", "lb", "lc", "li", "lk", "lr", "ls",
+    "lt", "lu", "lv", "ly", "ma", "mc", "md", "me", "mf", "mg", "mh", "mk",
+    "ml", "mm", "mn", "mo", "mp", "mq", "mr", "ms", "mt", "mu", "mv", "mw",
+    "mx", "my", "mz", "na", "nc", "ne", "nf", "ng", "ni", "nl", "no", "np",
+    "nr", "nu", "nz", "om", "pa", "pe", "pf", "pg", "ph", "pk", "pl", "pm",
+    "pn", "pr", "ps", "pt", "pw", "py", "qa", "re", "ro", "rs", "ru", "rw",
+    "sa", "sb", "sc", "sd", "se", "sg", "sh", "si", "sj", "sk", "sl", "sm",
+    "sn", "so", "sr", "ss", "st", "sv", "sx", "sy", "sz", "tc", "td", "tf",
+    "tg", "th", "tj", "tk", "tl", "tm", "tn", "to", "tr", "tt", "tv", "tw",
+    "tz", "ua", "ug", "um", "us", "uy", "uz", "va", "vc", "ve", "vg", "vi",
+    "vn", "vu", "wf", "ws", "ye", "yt", "za", "zm", "zw",
 }

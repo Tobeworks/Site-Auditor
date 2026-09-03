@@ -1,6 +1,15 @@
-"""Assert-based smoke test for auditor.checks.hosting. Run: uv run python test_hosting.py"""
+"""Assert-based smoke test for auditor.checks.hosting. Run: uv run python test/test_hosting.py"""
+import datetime
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 from auditor.checks import hosting
+
+
+class _FrozenDate(datetime.date):
+    """date.today() fixed to 2026-01-01 so the PHP-EOL buckets don't depend on the wall clock."""
+    @classmethod
+    def today(cls):
+        return datetime.date(2026, 1, 1)
 
 
 def _mock_ipapi():
@@ -21,9 +30,10 @@ def test_eol_php_version_is_kritisch():
 
 
 def test_current_php_version_is_positiv():
-    # 8.4's EOL (2027-12-31) is safely >183 days out from any plausible test-run
-    # date in this plan's timeframe — 8.3's EOL (2026-11-23) is not, don't use it here.
-    with patch("socket.gethostbyname", return_value="1.2.3.4"), \
+    # "today" is frozen at 2026-01-01, so PHP 8.4 (EOL 2028-12-31) is deterministically
+    # >183 days from EOL — this test's outcome never depends on when it is run.
+    with patch.object(hosting, "datetime", SimpleNamespace(date=_FrozenDate)), \
+         patch("socket.gethostbyname", return_value="1.2.3.4"), \
          patch("socket.gethostbyaddr", side_effect=Exception()), \
          patch("socket.getaddrinfo", side_effect=Exception()), \
          patch("ipwhois.IPWhois", side_effect=Exception("no network in tests")), \
