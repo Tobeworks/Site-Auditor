@@ -1,4 +1,4 @@
-"""Assert-based smoke test for auditor.checks.wordpress_deep. Run: uv run python test_wordpress_deep.py"""
+"""Assert-based smoke test for auditor.checks.wordpress_deep. Run: uv run python test/test_wordpress_deep.py"""
 from unittest.mock import patch, MagicMock
 from bs4 import BeautifulSoup
 from auditor.checks import wordpress_deep

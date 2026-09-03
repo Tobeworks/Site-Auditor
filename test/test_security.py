@@ -1,4 +1,4 @@
-"""Assert-based smoke test for auditor.checks.security. Run: uv run python test_security.py"""
+"""Assert-based smoke test for auditor.checks.security. Run: uv run python test/test_security.py"""
 from unittest.mock import patch, MagicMock
 from bs4 import BeautifulSoup
 from auditor.checks import security

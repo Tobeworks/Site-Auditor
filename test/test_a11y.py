@@ -1,4 +1,4 @@
-"""Assert-based smoke test for auditor.checks.a11y. Run: uv run python test_a11y.py"""
+"""Assert-based smoke test for auditor.checks.a11y. Run: uv run python test/test_a11y.py"""
 from unittest.mock import patch
 from bs4 import BeautifulSoup
 from auditor.checks import a11y

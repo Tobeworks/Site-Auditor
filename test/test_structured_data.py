@@ -1,4 +1,4 @@
-"""Assert-based smoke test for auditor.checks.structured_data. Run: uv run python test_structured_data.py"""
+"""Assert-based smoke test for auditor.checks.structured_data. Run: uv run python test/test_structured_data.py"""
 import json
 from bs4 import BeautifulSoup
 from auditor.checks import structured_data

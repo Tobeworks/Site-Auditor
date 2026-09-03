@@ -1,4 +1,4 @@
-"""Assert-based smoke test for auditor.checks.broken_links. Run: uv run python test_broken_links.py"""
+"""Assert-based smoke test for auditor.checks.broken_links. Run: uv run python test/test_broken_links.py"""
 from unittest.mock import patch
 from bs4 import BeautifulSoup
 from auditor.checks import broken_links

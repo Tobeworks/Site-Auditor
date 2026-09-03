@@ -1,8 +1,10 @@
 """Smoke test: run_audit() must work as a silent library call — no console output, no `rich`
-import in the core module. Run: python test_runner_silent.py"""
+import in the core module. Run: uv run python test/test_runner_silent.py"""
 import sys
 from unittest.mock import patch
+from bs4 import BeautifulSoup
 from auditor import runner
+from auditor.checks import seo
 
 
 def test_no_rich_import_in_runner():
@@ -48,9 +50,28 @@ def test_wordpress_result_has_findings_key():
     assert "issues" not in results["wordpress"]
 
 
+def test_real_finding_has_all_required_fields():
+    """wordpress.py's findings list is always empty, so it can't prove the *shape* of a
+    Finding. seo.py on a title-less page reliably produces SEO-01 (HOCH) — check that one
+    against the 7 required keys of the Finding model (auditor/findings.py)."""
+    html = "<html><head></head><body><p>kein Titel</p></body></html>"
+    result = seo.run("https://tobeworks.de", html, BeautifulSoup(html, "html.parser"), {})
+    findings = result["findings"]
+    assert findings, "seo.py must produce findings for a page without a title"
+    assert any(f["id"] == "SEO-01" and f["severity"] == "HOCH" for f in findings)
+    for f in findings:
+        for key in ("id", "severity", "finding", "impact", "solution", "effort_days", "timeframe"):
+            assert key in f, f"finding {f.get('id')} is missing required key '{key}'"
+        for key in ("id", "severity", "finding", "impact"):
+            assert isinstance(f[key], str) and f[key], f"{f['id']}.{key} must be a non-empty string"
+        if f["severity"] != "POSITIV":
+            assert isinstance(f["solution"], str) and f["solution"], f"{f['id']}.solution must be a non-empty string"
+
+
 if __name__ == "__main__":
     test_no_rich_import_in_runner()
     test_run_audit_silent_returns_dict()
     test_on_progress_callback_fires()
     test_wordpress_result_has_findings_key()
+    test_real_finding_has_all_required_fields()
     print("test_runner_silent: all tests passed")

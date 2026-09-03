@@ -1,4 +1,4 @@
-"""Assert-based smoke test for auditor.checks.dns. Run: uv run python test_dns.py"""
+"""Assert-based smoke test for auditor.checks.dns. Run: uv run python test/test_dns.py"""
 from unittest.mock import patch
 from auditor.checks import dns as dns_check
 

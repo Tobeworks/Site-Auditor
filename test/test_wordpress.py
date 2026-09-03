@@ -1,4 +1,4 @@
-"""Assert-based smoke test for auditor.checks.wordpress. Run: uv run python test_wordpress.py"""
+"""Assert-based smoke test for auditor.checks.wordpress. Run: uv run python test/test_wordpress.py"""
 from bs4 import BeautifulSoup
 from auditor.checks import wordpress
 

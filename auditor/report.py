@@ -272,7 +272,8 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
                 lines.append(f"| Plugins erkannt | {len(d.get('plugins', []))} |")
                 if d.get('plugins'):
                     lines.append(f"| Plugin-Liste | {', '.join(d['plugins'][:10])} |")
-                lines.append("")
+            lines.append("")
+            lines.append(_findings_list(d.get("findings", [])))
 
     if "wordpress_deep" in results:
         lines.append(_section_header("WordPress Details"))
@@ -395,6 +396,7 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
             lines.append(f"| jQuery | {d.get('jquery_version') or '-'} |")
             lines.append(f"| Page Builder | {d.get('page_builder') or '-'} |")
             lines.append("")
+            lines.append(_findings_list(d.get("findings", [])))
 
     lines.append("\n---")
     lines.append(f"*Generiert mit Tobeworks Site Auditor v{__version__}*")

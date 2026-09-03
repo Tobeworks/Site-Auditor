@@ -1,4 +1,4 @@
-"""Assert-based smoke test for auditor.findings. Run: uv run python test_findings.py"""
+"""Assert-based smoke test for auditor.findings. Run: uv run python test/test_findings.py"""
 from auditor.findings import finding, CATEGORY_MAP
 
 
