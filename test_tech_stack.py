@@ -19,7 +19,15 @@ def test_error_path_returns_error_key():
     assert "error" in result
 
 
+def test_detects_bricks_builder():
+    html = '<html><body><div class="brxe-container"></div></body></html>'
+    soup = BeautifulSoup(html, "lxml")
+    result = tech_stack.run("https://x.de", html, soup, {})
+    assert result["page_builder"] == "Bricks Builder"
+
+
 if __name__ == "__main__":
     test_returns_findings_key_as_empty_list()
     test_error_path_returns_error_key()
+    test_detects_bricks_builder()
     print("test_tech_stack: all tests passed")

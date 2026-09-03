@@ -45,6 +45,8 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
             page_builder = "Divi"
         elif soup.find(class_=re.compile(r"vc_row")):
             page_builder = "WPBakery"
+        elif soup.find(class_=re.compile(r"brxe-")):
+            page_builder = "Bricks Builder"
         elif soup.find(class_=re.compile(r"wp-block-")):
             page_builder = "Gutenberg"
 
