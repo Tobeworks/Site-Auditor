@@ -7,7 +7,7 @@ from auditor.checks import a11y
 def test_images_without_alt_is_mittel():
     html = '<html lang="de"><body><img src="x.jpg"></body></html>'
     soup = BeautifulSoup(html, "lxml")
-    with patch("asyncio.run", return_value={"violations": [], "incomplete": []}):
+    with patch.object(a11y, "_run_axe", return_value={"violations": [], "incomplete": []}):
         result = a11y.run("https://x.de", html, soup, {})
     f = next(f for f in result["findings"] if f["id"] == "A11-03")
     assert f["severity"] == "MITTEL"
@@ -16,7 +16,7 @@ def test_images_without_alt_is_mittel():
 def test_missing_lang_attribute_is_mittel():
     html = "<html><body><img src=\"x.jpg\" alt=\"ok\"></body></html>"
     soup = BeautifulSoup(html, "lxml")
-    with patch("asyncio.run", return_value={"violations": [], "incomplete": []}):
+    with patch.object(a11y, "_run_axe", return_value={"violations": [], "incomplete": []}):
         result = a11y.run("https://x.de", html, soup, {})
     f = next(f for f in result["findings"] if f["id"] == "A11-08")
     assert f["severity"] == "MITTEL"
@@ -25,7 +25,7 @@ def test_missing_lang_attribute_is_mittel():
 def test_clean_page_has_positiv_findings():
     html = '<html lang="de"><body><img src="x.jpg" alt="ok"><a href="/x">Startseite besuchen</a></body></html>'
     soup = BeautifulSoup(html, "lxml")
-    with patch("asyncio.run", return_value={"violations": [], "incomplete": []}):
+    with patch.object(a11y, "_run_axe", return_value={"violations": [], "incomplete": []}):
         result = a11y.run("https://x.de", html, soup, {})
     ids = {f["id"]: f["severity"] for f in result["findings"]}
     assert ids["A11-03"] == "POSITIV"
@@ -34,7 +34,7 @@ def test_clean_page_has_positiv_findings():
 
 
 def test_error_path_returns_error_key():
-    with patch("asyncio.run", side_effect=RuntimeError("boom")):
+    with patch.object(a11y, "_run_axe", side_effect=RuntimeError("boom")):
         result = a11y.run("https://x.de", "<html></html>", BeautifulSoup("", "lxml"), {})
     assert "error" in result
 
