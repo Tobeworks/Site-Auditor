@@ -273,7 +273,7 @@ Erstellt: [ISO date]
 [Traffic-light table of all modules]
 
 ## Kritische Issues
-[All issues across all modules, sorted by severity, cross-module]
+[All KRITISCH and HOCH findings across all modules, KRITISCH first, then HOCH]
 
 ## SEO
 ## Content & Struktur
@@ -320,9 +320,11 @@ Executive Summary as a Markdown table with all modules in report order:
 
 **Per-module section format:**
 
-Each section starts with a compact overview of the key metrics as a table or list, followed by issues as a `⚠️`/`🔴` list, positive findings as a `✅` list. No empty sections; on module error, render `⚪ Fehler: [message]`.
+Each section starts with a compact overview of the key metrics as a table or list, followed by the module's findings rendered by `_findings_list()` in `report.py`. No empty sections; on module error, render `⚪ Fehler: [message]`.
 
-Traffic-light logic: 0 issues = ✅, 1-2 = ⚠️, 3+ issues or at least 1 critical = 🔴, module error = ⚪
+`_findings_list()` sorts findings by severity (KRITISCH → HOCH → MITTEL → POSITIV) and renders each one as `- {icon} **[{Kennung}]** {finding}`, with the severity icon from `SEVERITY_ICON` (🔴 KRITISCH, 🟠 HOCH, ⚠️ MITTEL, ✅ POSITIV). Every non-POSITIV finding additionally gets two indented sub-bullets, `- *Wirkung:* {impact}` and `- *Lösung:* {solution}`; POSITIV findings are a single line without them. An empty findings list renders as `✅ Keine Findings.`.
+
+Traffic-light logic (`_status()` in `report.py`, severity-based — **not** a count): module error = ⚪; at least one KRITISCH or HOCH finding = 🔴; at least one MITTEL (and nothing higher) = ⚠️; otherwise (only POSITIV findings, or none) = ✅.
 
 ---
 
@@ -579,6 +581,25 @@ Extract from the JSON: performance score, LCP, CLS, FCP, TBT, TTFB, Speed Index,
 - Check `ETag` and `Last-Modified`
 - Missing = hint (not critical, but an optimization opportunity)
 
+**Asset sampling, cache headers & CDN (`PRF-03`/`PRF-04`):**
+
+`_collect_asset_head_info()` HEAD-requests up to 20 asset URLs (scripts, stylesheets, images; deduped, relative URLs resolved against the page URL) and returns size + cache headers for the reachable ones. From that sample:
+
+- `PRF-03` — the **first 5** assets form the cache sample; any of them with neither `Cache-Control` nor `ETag` nor `Last-Modified` → MITTEL with the count, otherwise POSITIV
+- `PRF-04` — CDN detection from the page's own response headers (`cf-ray` → Cloudflare, `x-served-by` → Fastly, `x-cache`/`via` → generic CDN). Only ever POSITIV; absence of a CDN is deliberately not a finding
+
+**JS library redundancy (`PRF-14`):**
+
+Matches every `<script src>` against `LIB_PATTERNS` (jquery, bootstrap, moment, lodash, react, vue) to extract library + version. Two or more versions of the same library → one HOCH finding per library, listing the versions. A `jquery-migrate` script → MITTEL (legacy compat shim). Neither → POSITIV.
+
+**Image format ratio (`PRF-15`):**
+
+`modern_image_ratio` = share of `<img src>` values ending in `.webp`/`.avif`. Below 0.5 → MITTEL with the counts, otherwise POSITIV. No images at all → no finding.
+
+**Icon font (`PRF-16`):**
+
+Scans `<link href>` for `font-awesome`/`fontawesome`. Found → MITTEL, including the asset's size in KB when the HEAD sample resolved it; not found → POSITIV.
+
 **Resource hints:**
 
 - Check `<link rel="preconnect">` for external domains in the HTML
@@ -724,13 +745,15 @@ Output:
 
 - Detect and list `itemtype` attributes in the HTML
 
-**OG type:**
+**JSON-LD deep validation** (beyond the required-field check above):
 
-- Check `og:type` (already covered in seo.py, here only as an issue when missing)
+- `SDA-04` recommended fields — `RECOMMENDED_FIELDS` per type (`Product`: `sku`, `brand`, `seller`, `priceValidUntil`; `Organization`: `logo`, `address`, `sameAs`); each missing one is its own MITTEL finding
+- `SDA-05` protocol consistency — any `http://` URL inside the JSON-LD of an HTTPS page → one MITTEL finding with the count
+- `SDA-06` raw HTML in text fields — string values matching `HTML_TAG_RE` (e.g. `<br />` in `description`) → one MITTEL finding with the count
+- `SDA-07` price consistency — `Product` only: compares `offers.price` against the prices `PRICE_RE` finds in the visible page text; a deviation > 0.01 is HOCH, a match is POSITIV, no comparable visible price means no finding
+- `SDA-08` breadcrumb consistency — a visible breadcrumb (`nav[aria-label*=breadcrumb]`, `.breadcrumb`, `.breadcrumbs`) without a `BreadcrumbList` schema is MITTEL, with one is POSITIV
 
-**Twitter Cards:**
-
-- `twitter:card`, `twitter:title`, `twitter:description`, `twitter:image`
+Note: `og:type` and the Twitter Card tags are **not** checked here — that extraction lives in `seo.py` only (this module used to duplicate it; the duplicate fields were removed).
 
 Output:
 
@@ -740,13 +763,11 @@ Output:
   "json_ld_count": int,
   "json_ld_field_issues": list[str],
   "microdata_types": list[str],
-  "twitter_card": str | None,
-  "twitter_title": str | None,
   "findings": list[Finding]
 }
 ```
 
-Issues: no JSON-LD, JSON-LD not parseable, no `WebSite`/`Organization` schema, missing required fields, missing `og:type`, no Twitter Card.
+Issues: no JSON-LD, JSON-LD not parseable, no `WebSite`/`Organization` schema, missing required fields, plus the SDA-04…SDA-08 checks above.
 
 ---
 
@@ -759,7 +780,7 @@ Validates raw HTML markup against the **W3C Nu Html Checker** — the same valid
 - `POST` the raw `html` string to `https://validator.w3.org/nu/?out=json` with `Content-Type: text/html; charset=utf-8` via `httpx` (no extra dependency — `httpx` is already a core dep)
 - Timeout 15s, same pattern as every other check: network/parse failure → `{"error": str(e)}`, never raises
 - Response `messages` split by `type`: `"error"` → `errors`, `"info"`/`"warning"` → `warnings`
-- `issues` gets the first 10 errors as human-readable strings (`"Zeile {line}: {message}"`), with a `"... und N weitere Markup-Fehler"` tail note if there are more
+- `findings` (all under Kennung `MKP-01`): one finding per error for the first 10 errors (`"Zeile {line}: {message}"`), plus a `"... und N weitere Markup-Fehler"` tail-note finding if there are more than 10; zero errors yields a single POSITIV finding instead
 
 Output:
 
@@ -840,7 +861,10 @@ Detection via headers and HTML patterns:
   - Elementor: `elementor-`
   - Divi: `et_pb_`
   - WPBakery: `vc_row`
+  - Bricks Builder: `brxe-`
   - Gutenberg: `wp-block-`
+
+The `brxe-` class prefix (Bricks Builder) is checked before the `wp-block-` fallback, since Bricks pages also contain Gutenberg block markup. This module stays informational-only: it emits **no** findings (`findings` is always `[]`), the `TCH` Kennung prefix is reserved for future use.
 
 Output:
 
@@ -878,6 +902,20 @@ HEAD requests to: `/sitemap.xml`, `/sitemap_index.xml`, `/wp-sitemap.xml`
 - Check for `Disallow: /wp-admin/`
 - `Disallow: /` (accidentally blocking everything) flagged critical
 - Check for a sitemap reference in robots.txt
+
+**robots.txt bot groups (`SOC-06`):**
+
+`_parse_robots_groups()` splits robots.txt into `{"agents": [...], "disallow": [...]}` blocks (consecutive `User-agent:` lines before the first rule form one group; comments stripped — a convention parser, not a full RFC implementation). From those groups:
+
+- More than one `User-agent: *` block → HOCH (ambiguous; crawlers differ in which one they honour)
+- A bot-specific group (`googlebot`, `bingbot`) that frees paths the `*`-group disallows → MITTEL, listing up to 5 freed paths
+- Neither → POSITIV
+
+**hreflang validation (`SOC-07`/`SOC-08`/`SOC-09`):**
+
+- `SOC-07` — every `hreflang` value is checked against `_iso_codes.py`: language against the full ISO-639-1 set, an optional second segment against the full ISO-3166-1 alpha-2 set (all 249 codes). A 4-letter second segment is accepted as a BCP-47 script subtag (`zh-Hant`) by shape, without a list lookup; `x-default` always passes. Unknown codes → MITTEL ("Unbekannter Sprach-/Ländercode in hreflang"), otherwise POSITIV. The check validates code *membership* only, not the semantic sensibility of a combination.
+- `SOC-08` — hreflang set present but no `x-default` entry → MITTEL, with one → POSITIV
+- `SOC-09` — backlink reciprocity: GETs up to 5 hreflang targets (cost cap, `x-default` and self excluded) and checks each one links back to this URL via hreflang. Missing backlinks → HOCH, all present → POSITIV
 
 **Feed detection:**
 
@@ -929,6 +967,16 @@ Resolves the domain's IP address and gathers hosting information. No HTML needed
 - `server` header: extract web server type and version
 - A version in the `server` header = issue (e.g. `Apache/2.4.51` or `nginx/1.18.0`)
 - `x-powered-by` with a version number = issue
+
+**PHP end-of-life (`HST-04`):**
+
+`_php_eol_check()` parses the PHP version out of the `x-powered-by` header and looks its `major.minor` branch up in `auditor/checks/_eol_dates.py` (`PHP_EOL_DATES`, a hand-maintained `branch -> security-support-end` table; source: php.net's supported-versions/eol pages, "Security Support Until" column — no live API call by design). Then, against `datetime.date.today()`:
+
+- EOL date already passed → **KRITISCH** ("keine Security-Updates mehr", with a factual GDPR Art. 32 note)
+- EOL within 183 days → MITTEL, naming the date and the remaining days
+- Otherwise → POSITIV
+
+No header, an unparseable version, or a branch missing from the table → no finding. Keep the table current when php.net publishes new dates; a stale table means a wrong KRITISCH claim in a client report.
 
 **Shodan (optional):**
 
@@ -1060,6 +1108,14 @@ Issues: no SPF, no DMARC, DMARC policy `none`, no DKIM found, no DNSSEC, no CAA 
 - Duplicate title/H1: when `<title>` is exactly equal to the H1
 - Readability: Flesch-Kincaid approximated via average sentence length (no external packages)
 - Broken images: check `<img src>` via HEAD request, max 20 images, 5s timeout, parallel via `httpx.AsyncClient`
+
+**Soft-404 quality probe (`CNT-05`):**
+
+`_check_soft_404()` GETs a guaranteed-nonexistent URL (`/site-auditor-404-check-{random hex}`, redirects followed):
+
+- HTTP 200 → **HOCH** soft-404 (nonexistent URLs must return 404/410 — duplicate content + wasted crawl budget)
+- HTTP 404/410 → the error page is judged for quality: no `<nav>`/`<header>` **and** less than 20% of the audited page's word count → MITTEL "wirkt generisch", otherwise POSITIV
+- Any other status, or a failed request → returns `None`, no finding (never flag on a network hiccup)
 
 Output:
 
