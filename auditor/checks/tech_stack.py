@@ -50,12 +50,36 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
         elif soup.find(class_=re.compile(r"wp-block-")):
             page_builder = "Gutenberg"
 
+        # JS meta-framework / site-builder detection — independent of page_builder
+        # above (that's WordPress-specific; a site can run neither, either, or in
+        # rare headless setups both).
+        def _has_asset_path(substring):
+            for tag in soup.find_all(["script", "link"]):
+                src = tag.get("src") or tag.get("href") or ""
+                if substring in src:
+                    return True
+            return False
+
+        generator_tag = soup.find("meta", attrs={"name": "generator"})
+        generator = (generator_tag.get("content", "") if generator_tag else "").lower()
+
+        framework = None
+        if "astro" in generator or soup.find("astro-island") or _has_asset_path("/_astro/"):
+            framework = "Astro"
+        elif soup.find(id="__next") or soup.find("script", id="__NEXT_DATA__") or _has_asset_path("/_next/"):
+            framework = "Next.js"
+        elif soup.find(id="__nuxt") or soup.find(id="__layout") or _has_asset_path("/_nuxt/"):
+            framework = "Nuxt"
+        elif "wix.com" in generator or soup.find(class_=re.compile(r"^wix-")):
+            framework = "Wix"
+
         return {
             "php_version": php_version,
             "cdn": cdn,
             "cache_layer": cache_layer,
             "jquery_version": jquery_version,
             "page_builder": page_builder,
+            "framework": framework,
             "findings": [],
         }
     except Exception as e:

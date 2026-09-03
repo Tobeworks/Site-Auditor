@@ -196,6 +196,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
             "privacy_url": privacy_url,
             "cookie_banner_detected": cookie_banner_detected,
             "cookie_solution": cookie_solution,
+            "consent_required": bool(needs_consent),
             "tracking_needs_consent": tracking_needs_consent,
             "tracking_cookieless": tracking_cookieless,
             "matomo": matomo if matomo["found"] else None,

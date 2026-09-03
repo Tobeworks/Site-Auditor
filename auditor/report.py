@@ -321,7 +321,13 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
             lines.append("|---|---|")
             lines.append(f"| Impressum | {'✅ ' + str(d.get('impressum_url', '')) if d.get('impressum_found') else '❌ nicht gefunden'} |")
             lines.append(f"| Datenschutz | {'✅ ' + str(d.get('privacy_url', '')) if d.get('privacy_found') else '❌ nicht gefunden'} |")
-            lines.append(f"| Cookie-Banner | {'✅ ' + str(d.get('cookie_solution', '')) if d.get('cookie_banner_detected') else '❌ nicht erkannt'} |")
+            if d.get('cookie_banner_detected'):
+                cookie_row = '✅ ' + str(d.get('cookie_solution', ''))
+            elif d.get('consent_required'):
+                cookie_row = '❌ nicht erkannt'
+            else:
+                cookie_row = '✅ nicht nötig (kein Consent-pflichtiges Tracking)'
+            lines.append(f"| Cookie-Banner | {cookie_row} |")
             lines.append("")
             if d.get("tracking_in_html"):
                 lines.append(f"**Tracking:** {', '.join(d['tracking_in_html'])}")
@@ -395,6 +401,7 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
             lines.append(f"| Cache-Layer | {d.get('cache_layer') or '-'} |")
             lines.append(f"| jQuery | {d.get('jquery_version') or '-'} |")
             lines.append(f"| Page Builder | {d.get('page_builder') or '-'} |")
+            lines.append(f"| Framework | {d.get('framework') or '-'} |")
             lines.append("")
             lines.append(_findings_list(d.get("findings", [])))
 

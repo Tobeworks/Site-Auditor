@@ -46,9 +46,30 @@ def test_error_path_returns_error_key():
     assert "error" in result
 
 
+def test_no_tracking_means_consent_not_required():
+    # Regression test: consent_required must be False when nothing on the page
+    # needs consent — report.py uses this to avoid a misleading "nicht erkannt"
+    # for sites that simply don't need a cookie banner.
+    html = "<html><body>Nothing tracked here.</body></html>"
+    soup = BeautifulSoup(html, "lxml")
+    with patch("httpx.Client", return_value=_client_mock(404)):
+        result = legal.run("https://x.de", html, soup, {})
+    assert result["consent_required"] is False
+
+
+def test_tracking_without_banner_means_consent_required():
+    html = "<html><body><script>gtag('config', 'x')</script></body></html>"
+    soup = BeautifulSoup(html, "lxml")
+    with patch("httpx.Client", return_value=_client_mock(404)):
+        result = legal.run("https://x.de", html, soup, {})
+    assert result["consent_required"] is True
+
+
 if __name__ == "__main__":
     test_missing_impressum_is_hoch()
     test_tracking_without_banner_is_hoch()
     test_tracking_with_banner_is_mittel()
     test_error_path_returns_error_key()
+    test_no_tracking_means_consent_not_required()
+    test_tracking_without_banner_means_consent_required()
     print("test_legal: all tests passed")

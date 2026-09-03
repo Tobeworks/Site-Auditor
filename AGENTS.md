@@ -839,6 +839,8 @@ Output:
   "privacy_url": str | None,
   "cookie_banner_detected": bool,
   "cookie_solution": str | None,
+  "consent_required": bool,   # true if any tracking found needs prior consent (used by report.py's
+                               # Cookie-Banner status row: no banner + no consent needed is ✅, not ❌)
   "tracking_in_html": list[str],
   "third_party_domains": list[{"domain": str, "category": str}],
   "findings": list[Finding]
@@ -863,6 +865,11 @@ Detection via headers and HTML patterns:
   - WPBakery: `vc_row`
   - Bricks Builder: `brxe-`
   - Gutenberg: `wp-block-`
+- Framework/site-builder (independent of the WordPress-only `page_builder` above — a site can run neither, either, or in rare headless setups both):
+  - Astro: `<meta name="generator" content="Astro ...">`, OR the `<astro-island>` custom element (a tag name, not a CSS class — Astro's real output rarely has the generator meta), OR any asset path containing `/_astro/`
+  - Next.js: `#__next` root element, `<script id="__NEXT_DATA__">`, or an asset path containing `/_next/`
+  - Nuxt: `#__nuxt`/`#__layout` root elements, or an asset path containing `/_nuxt/`
+  - Wix: `<meta name="generator" content="Wix.com Website Builder">`, or a `wix-`-prefixed CSS class
 
 The `brxe-` class prefix (Bricks Builder) is checked before the `wp-block-` fallback, since Bricks pages also contain Gutenberg block markup. This module stays informational-only: it emits **no** findings (`findings` is always `[]`), the `TCH` Kennung prefix is reserved for future use.
 
@@ -875,6 +882,7 @@ Output:
   "cache_layer": str | None,
   "jquery_version": str | None,
   "page_builder": str | None,
+  "framework": str | None,
   "findings": list[Finding]
 }
 ```
@@ -894,7 +902,7 @@ Output:
 
 **Sitemap:**
 
-HEAD requests to: `/sitemap.xml`, `/sitemap_index.xml`, `/wp-sitemap.xml`
+HEAD requests to: `/sitemap.xml`, `/sitemap_index.xml`, `/sitemap-index.xml`, `/wp-sitemap.xml`. Additionally — and authoritatively, since guessing well-known filenames can never cover every convention — the `Sitemap:` directive(s) in robots.txt are parsed and each declared URL is HEAD-verified and added if not already found.
 
 **robots.txt:**
 

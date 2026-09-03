@@ -73,10 +73,39 @@ def test_error_path_returns_error_key():
     assert "error" in result
 
 
+def test_sitemap_declared_only_in_robots_txt_is_found():
+    # None of the guessed filenames exist (all 404) — only robots.txt's
+    # Sitemap: directive, with a non-standard filename, points to a real one.
+    # Regression test for the bug where sitemap discovery only ever guessed
+    # fixed filenames and never read robots.txt's authoritative Sitemap: line.
+    robots = "User-agent: *\nDisallow:\nSitemap: https://x.de/sitemap-custom-name.xml\n"
+    client = MagicMock()
+    client.__enter__.return_value = client
+
+    def head(url, **kw):
+        status = 200 if url == "https://x.de/sitemap-custom-name.xml" else 404
+        return MagicMock(status_code=status)
+
+    def get(url, **kw):
+        if url.endswith("/robots.txt"):
+            return MagicMock(status_code=200, text=robots)
+        return MagicMock(status_code=404, text="")
+
+    client.head.side_effect = head
+    client.get.side_effect = get
+
+    with patch("httpx.Client", return_value=client):
+        result = social.run("https://x.de/", "<html></html>", BeautifulSoup("", "lxml"), {})
+    assert result["sitemap_urls"] == ["https://x.de/sitemap-custom-name.xml"]
+    f = next(f for f in result["findings"] if f["id"] == "SOC-03")
+    assert f["severity"] == "POSITIV"
+
+
 if __name__ == "__main__":
     test_multiple_star_groups_is_hoch()
     test_weaker_bot_group_is_mittel()
     test_invalid_hreflang_is_mittel()
     test_missing_x_default_is_mittel()
     test_error_path_returns_error_key()
+    test_sitemap_declared_only_in_robots_txt_is_found()
     print("test_social: all tests passed")

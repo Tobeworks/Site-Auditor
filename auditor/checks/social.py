@@ -80,7 +80,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
         feed_urls = []
 
         with httpx.Client(timeout=8, headers={"User-Agent": "Mozilla/5.0"}) as client:
-            for path in ["/sitemap.xml", "/sitemap_index.xml", "/wp-sitemap.xml"]:
+            for path in ["/sitemap.xml", "/sitemap_index.xml", "/sitemap-index.xml", "/wp-sitemap.xml"]:
                 try:
                     r = client.head(f"{base}{path}")
                     if r.status_code in (200, 301, 302):
@@ -100,6 +100,20 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
                             break
                     robots_wp_admin_blocked = "disallow: /wp-admin" in robots_content
                     robots_sitemap_referenced = "sitemap:" in robots_content
+                    # Root cause fix: guessing well-known filenames above never covers every
+                    # convention (e.g. Yoast's "sitemap-index.xml"). robots.txt's Sitemap:
+                    # directive is the authoritative source when present — parse and use it.
+                    for line in robots_text.splitlines():
+                        stripped = line.strip()
+                        if stripped.lower().startswith("sitemap:"):
+                            declared_url = stripped.split(":", 1)[1].strip()
+                            if declared_url and declared_url not in sitemap_urls:
+                                try:
+                                    dr = client.head(declared_url)
+                                    if dr.status_code in (200, 301, 302):
+                                        sitemap_urls.append(declared_url)
+                                except Exception:
+                                    pass
             except Exception:
                 pass
 
