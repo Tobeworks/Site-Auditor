@@ -1,4 +1,4 @@
-__version__ = "1.2.1"
+__version__ = "1.2.2"
 
 from auditor.runner import run_audit
 from auditor.report import build as build_report

@@ -32,6 +32,8 @@ KNOWN_THIRD_PARTY_CATEGORIES = {
 COOKIE_SOLUTIONS = [
     "cookiebot", "cookieconsent", "cookie-banner", "cmplz",
     "borlabs-cookie", "usercentrics", "onetrust", "didomi",
+    "real-cookie-banner", "iubenda", "consentmanager", "cookieyes",
+    "cookiefirst", "klaro", "termly", "osano",
 ]
 
 CONSENT_REQUIRED_PATTERNS = {

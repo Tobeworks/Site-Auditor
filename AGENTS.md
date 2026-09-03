@@ -814,7 +814,7 @@ Note: this check sends the page's HTML to the public W3C validator service — s
 
 Search the HTML for known classes/IDs/attributes:
 
-- `cookiebot`, `cookieconsent`, `cookie-banner`, `cmplz`, `borlabs-cookie`, `usercentrics`, `onetrust`, `didomi`
+- `cookiebot`, `cookieconsent`, `cookie-banner`, `cmplz`, `borlabs-cookie`, `usercentrics`, `onetrust`, `didomi`, `real-cookie-banner`, `iubenda`, `consentmanager`, `cookieyes`, `cookiefirst`, `klaro`, `termly`, `osano`
 
 **Tracking scripts:**
 

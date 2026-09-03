@@ -65,6 +65,27 @@ def test_tracking_without_banner_means_consent_required():
     assert result["consent_required"] is True
 
 
+def test_detects_real_cookie_banner_and_iubenda():
+    # Regression test: COOKIE_SOLUTIONS was missing several widely-used CMPs
+    # (Real Cookie Banner, Iubenda, consentmanager.net, CookieYes, Cookiefirst,
+    # Klaro, Termly, Osano) — spot-check two of them. Real Cookie Banner's own
+    # markup contains the substring "cookie-banner", which the generic pattern
+    # already earlier in the list matches first — still correctly flags a banner
+    # as present, just doesn't necessarily win with its own specific label.
+    html = '<html><body><div id="real-cookie-banner"></div></body></html>'
+    soup = BeautifulSoup(html, "lxml")
+    with patch("httpx.Client", return_value=_client_mock(404)):
+        result = legal.run("https://x.de", html, soup, {})
+    assert result["cookie_banner_detected"] is True
+
+    html2 = '<html><head><script src="https://cdn.iubenda.com/cs.js"></script></head></html>'
+    soup2 = BeautifulSoup(html2, "lxml")
+    with patch("httpx.Client", return_value=_client_mock(404)):
+        result2 = legal.run("https://x.de", html2, soup2, {})
+    assert result2["cookie_banner_detected"] is True
+    assert result2["cookie_solution"] == "iubenda"
+
+
 if __name__ == "__main__":
     test_missing_impressum_is_hoch()
     test_tracking_without_banner_is_hoch()
@@ -72,4 +93,5 @@ if __name__ == "__main__":
     test_error_path_returns_error_key()
     test_no_tracking_means_consent_not_required()
     test_tracking_without_banner_means_consent_required()
+    test_detects_real_cookie_banner_and_iubenda()
     print("test_legal: all tests passed")
