@@ -120,6 +120,53 @@ def test_without_skip_both_run():
     assert results["hosting"]["who"] == "hosting" and results["dns"]["who"] == "dns"
 
 
+def _redirecting_client(table):
+    """Echter httpx-Client mit nachgestellten Antworten: table = {url: (status, location_oder_None)}."""
+    import httpx
+
+    def handler(request):
+        status, location = table[str(request.url)]
+        headers = {"location": location} if location else {}
+        return httpx.Response(status, headers=headers, text="<html><title>t</title></html>" if status == 200 else "")
+    return httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False)
+
+
+def test_fetch_follows_redirects_when_no_validator_is_given():
+    client = _redirecting_client({"https://a.de": (301, "https://b.de/"), "https://b.de/": (200, None)})
+    with patch("httpx.Client", return_value=client):
+        html, headers, _ = runner._fetch("https://a.de")
+    assert html and "<title>t</title>" in html
+
+
+def test_fetch_stops_at_a_redirect_target_the_validator_rejects():
+    client = _redirecting_client({"https://a.de": (302, "http://10.0.0.5/admin"), "http://10.0.0.5/admin": (200, None)})
+    seen = []
+    with patch("httpx.Client", return_value=client):
+        html, headers, _ = runner._fetch("https://a.de", url_validator=lambda u: seen.append(u) or "10.0.0.5" not in u)
+    assert html is None
+    assert seen == ["http://10.0.0.5/admin"]
+
+
+def test_fetch_accepts_redirects_the_validator_allows():
+    client = _redirecting_client({"https://a.de": (301, "https://www.a.de/"), "https://www.a.de/": (200, None)})
+    with patch("httpx.Client", return_value=client):
+        html, _, _ = runner._fetch("https://a.de", url_validator=lambda u: True)
+    assert html is not None
+
+
+def test_run_audit_passes_the_validator_to_fetch():
+    seen = {}
+
+    def fake_fetch(url, url_validator=None):
+        seen["validator"] = url_validator
+        return None, {}, 0
+
+    validator = lambda u: True  # noqa: E731
+    with patch.object(runner, "_fetch", fake_fetch):
+        assert runner.run_audit("https://a.de", url_validator=validator) == {}
+    assert seen["validator"] is validator
+
+
 if __name__ == "__main__":
     test_no_rich_import_in_runner()
     test_run_audit_silent_returns_dict()
@@ -129,5 +176,9 @@ if __name__ == "__main__":
     test_skip_hosting_keeps_dns()
     test_skip_dns_keeps_hosting()
     test_without_skip_both_run()
+    test_fetch_follows_redirects_when_no_validator_is_given()
+    test_fetch_stops_at_a_redirect_target_the_validator_rejects()
+    test_fetch_accepts_redirects_the_validator_allows()
+    test_run_audit_passes_the_validator_to_fetch()
     test_real_finding_has_all_required_fields()
     print("test_runner_silent: all tests passed")

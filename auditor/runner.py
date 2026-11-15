@@ -15,7 +15,15 @@ from auditor.checks import (
 OnProgress = Callable[[str, str], None]
 
 
-def run_audit(url: str, skip: list[str] | None = None, on_progress: OnProgress | None = None) -> dict:
+def run_audit(
+    url: str,
+    skip: list[str] | None = None,
+    on_progress: OnProgress | None = None,
+    url_validator: Callable[[str], bool] | None = None,
+) -> dict:
+    """url_validator: optional, wird für jedes Weiterleitungsziel der ersten Abfrage aufgerufen. Gibt es False zurück, wird
+    nicht weiter gefolgt und der Audit endet wie bei einer nicht ladbaren Seite. Ein öffentlicher Dienst übergibt hier seine
+    Prüfung auf öffentliche Adressen, sonst führt eine Weiterleitung auf interne Adressen zu SSRF."""
     skip = [s.lower() for s in (skip or [])]
     results = {}
 
@@ -25,7 +33,7 @@ def run_audit(url: str, skip: list[str] | None = None, on_progress: OnProgress |
 
     notify("start", url)
 
-    html, resp_headers, response_time_ms = _fetch(url)
+    html, resp_headers, response_time_ms = _fetch(url, url_validator)
 
     if html is None:
         notify("error", "Seite konnte nicht geladen werden.")
@@ -98,7 +106,25 @@ def run_audit(url: str, skip: list[str] | None = None, on_progress: OnProgress |
     return results
 
 
-def _fetch(url: str) -> tuple[str | None, dict, int]:
+class _BlockedRedirect(Exception):
+    pass
+
+
+def _get_following(client, url: str, url_validator, max_redirects: int = 5):
+    """GET mit Weiterleitungen, bei denen jedes Ziel geprüft wird (httpx prüft sonst nur die erste Adresse)."""
+    for _ in range(max_redirects + 1):
+        r = client.get(url)
+        location = r.headers.get("location")
+        if r.is_redirect and location:
+            url = str(r.url.join(location))
+            if url_validator is not None and not url_validator(url):
+                raise _BlockedRedirect(url)
+            continue
+        return r
+    raise httpx.TooManyRedirects("zu viele Weiterleitungen")
+
+
+def _fetch(url: str, url_validator=None) -> tuple[str | None, dict, int]:
     ua = {"User-Agent": "Mozilla/5.0 (compatible; site-auditor/1.0)"}
     parsed = urlparse(url)
 
@@ -111,15 +137,17 @@ def _fetch(url: str) -> tuple[str | None, dict, int]:
         for attempt in range(2):
             try:
                 start = time.time()
-                with httpx.Client(timeout=15, follow_redirects=True, http2=True, headers=ua, verify=False) as client:
-                    r = client.get(candidate)
+                with httpx.Client(timeout=15, follow_redirects=False, http2=True, headers=ua, verify=False) as client:
+                    r = _get_following(client, candidate, url_validator)
                     elapsed = int((time.time() - start) * 1000)
                     h = dict(r.headers)
                     h["_response_time_ms"] = elapsed
                     h["_raw_version"] = str(r.http_version)
                     h["_fallback_used"] = candidate != url
                     return r.text, h, elapsed
-            except (httpx.ConnectError, httpx.TimeoutException):
+            except _BlockedRedirect:
+                return None, {}, 0
+            except (httpx.ConnectError, httpx.TimeoutException, httpx.TooManyRedirects):
                 if attempt == 1:
                     break
     return None, {}, 0
