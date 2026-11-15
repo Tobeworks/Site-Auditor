@@ -58,7 +58,12 @@ site-auditor/
 │       ├── social.py
 │       ├── hosting.py
 │       ├── dns.py
-│       └── content_quality.py
+│       ├── content_quality.py
+│       ├── ai_visibility.py      # robots.txt AI crawlers, llms.txt
+│       ├── contact.py            # phone, mail, form, contact link
+│       ├── accessibility_static.py   # lang, alt, labels, statement (no browser)
+│       ├── reviews.py            # review markup/widgets/testimonials, optional Google Places
+│       └── google_result.py      # optional: Google result via DataForSEO
 ├── main.py                 # legacy entry point: `python main.py <url>`, delegates to auditor.cli
 ├── test/
 │   ├── test_markup.py            # assert-based smoke test for checks/markup.py
@@ -1210,5 +1215,9 @@ If `ANTHROPIC_API_KEY` is not set: the section is skipped, `on_progress("warning
 - `WPSCAN_API_KEY` (optional): WPScan Vulnerability API for plugin checks
 - `SHODAN_API_KEY` (optional): Shodan lookup for open ports and CVEs
 - `ANTHROPIC_API_KEY` (optional): Claude API for the `--summary` / `auditor.summary.generate()` plain-language summary
+- `GOOGLE_PLACES_API_KEY` (optional): Google Places text search for the `reviews` module (Teil B), cached per domain for a day
+- `DATAFORSEO_API_KEY` (optional): base64 of `email:password`, used by `google_result`, cached per domain for a day
+
+Order matters in `runner.py`: `content_quality` removes nav/header/footer/script from the shared soup, so every module that reads links or scripts (`contact`, `reviews`, ...) must run before it. `run_audit()` ends with `results["score"]` (see `auditor/scoring.py`).
 
 Copy `.env.example` to `.env` and fill in what you have — `auditor/cli.py` loads `.env` automatically via `python-dotenv`. Library users of `run_audit()`/`build_report()` directly are responsible for loading their own env (dotenv, container env, secrets manager, ...) before calling in.

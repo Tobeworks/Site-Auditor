@@ -25,6 +25,12 @@ Built primarily for WordPress sites, but works on any URL.
 | **Tech Stack** | PHP version, CDN, cache layer, jQuery, page builder |
 | **Social & Crawlability** | robots.txt, sitemap, hreflang, canonical, RSS/Atom feeds |
 | **Content & Structure** | Word count, readability, duplicate title/H1, broken images |
+| **AI Visibility** | robots.txt rules for AI crawlers (GPTBot, ClaudeBot, ...), llms.txt |
+| **Contact** | Phone (tap-to-call), e-mail, contact form or link on the page |
+| **Accessibility (static)** | Page language, alt texts, form labels, accessibility statement link (no browser needed) |
+| **Reviews** | Review markup, review widgets, testimonials; optional Google Places match (rating, count, phone/postcode comparison) |
+| **Google Result** | Optional: how Google shows the domain for a search of its name (title, description, sitelinks) via DataForSEO |
+| **Score** | Category scores (0-10), overall score, top 3 measures, effort ranges (estimates) in `results["score"]` |
 
 ---
 
@@ -181,6 +187,8 @@ For long-running audits in a web context, prefer a background task queue (Celery
 | `WPSCAN_API_KEY` | WordPress plugin vulnerability checks via WPScan |
 | `SHODAN_API_KEY` | Open ports and CVE detection via Shodan |
 | `ANTHROPIC_API_KEY` | Plain-language AI summary (`--summary` flag / `auditor.summary.generate()`) |
+| `GOOGLE_PLACES_API_KEY` | Google Places match for the Reviews check (rating, count; about 3.5 cents per domain and day) |
+| `DATAFORSEO_API_KEY` | Google Result check, base64 of `email:password` (about 0.2 cents per domain and day) |
 
 Copy `.env.example` to `.env` and fill in what you have:
 
