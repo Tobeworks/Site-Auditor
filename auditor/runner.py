@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 from auditor.checks import (
     wordpress, wordpress_deep, seo, security, performance,
     broken_links, a11y, structured_data, markup, legal, tech_stack,
-    social, hosting, dns, content_quality, ai_visibility, contact,
+    social, hosting, dns, content_quality, ai_visibility, contact, accessibility_static,
 )
 
 OnProgress = Callable[[str, str], None]
@@ -72,6 +72,7 @@ def run_audit(url: str, skip: list[str] | None = None, on_progress: OnProgress |
         # Neue Module vor content_quality: das entfernt nav/header/footer/script aus der gemeinsamen soup.
         ("ai_visibility", ai_visibility, "KI-Crawler prüfen..."),
         ("contact", contact, "Kontaktweg prüfen..."),
+        ("accessibility_static", accessibility_static, "Barrierefreiheit prüfen (Schnelltest)..."),
         ("content_quality", content_quality, "Content-Qualität prüfen..."),
     ]
 

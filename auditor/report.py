@@ -23,6 +23,7 @@ def _status(findings: list, error: bool = False) -> str:
 EXTRA_MODULES = [
     ("ai_visibility", "KI-Crawler & llms.txt"),
     ("contact", "Kontaktweg"),
+    ("accessibility_static", "Barrierefreiheit (Schnelltest)"),
 ]
 
 
