@@ -125,6 +125,14 @@ def test_second_call_for_same_domain_uses_cache():
     assert client.post.call_count == 1
 
 
+def test_timeout_is_generous_for_the_live_endpoint():
+    # Der Live-Endpoint antwortet meist in 2 bis 6 Sekunden, in Tests lag eine Antwort bei 14,7 Sekunden.
+    google_result._GOOGLE_CACHE.clear()
+    with patch.dict(os.environ, {"DATAFORSEO_API_KEY": "k"}), patch("httpx.Client", return_value=_client(_resp([]))) as factory:
+        google_result.fetch_google_result("x.de")
+    assert factory.call_args.kwargs["timeout"] >= 30
+
+
 def test_request_uses_basic_auth_and_germany_desktop():
     client = _client(_resp([_item("x.de")]))
     _fetch(client=client, key="abc==")

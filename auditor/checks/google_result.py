@@ -50,7 +50,7 @@ def fetch_google_result(domain: str) -> dict:
         if hit and time.time() - hit[0] < CACHE_TTL:
             return dict(hit[1])
     try:
-        with httpx.Client(timeout=15) as client:
+        with httpx.Client(timeout=30) as client:
             r = client.post(
                 DATAFORSEO_URL,
                 headers={"Authorization": f"Basic {key}", "Content-Type": "application/json"},
