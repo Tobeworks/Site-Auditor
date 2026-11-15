@@ -69,9 +69,10 @@ def run_audit(url: str, skip: list[str] | None = None, on_progress: OnProgress |
         ("legal", legal, "Rechtliche Checks..."),
         ("tech_stack", tech_stack, "Tech-Stack erkennen..."),
         ("social", social, "Social & Crawlability prüfen..."),
-        ("content_quality", content_quality, "Content-Qualität prüfen..."),
+        # Neue Module vor content_quality: das entfernt nav/header/footer/script aus der gemeinsamen soup.
         ("ai_visibility", ai_visibility, "KI-Crawler prüfen..."),
         ("contact", contact, "Kontaktweg prüfen..."),
+        ("content_quality", content_quality, "Content-Qualität prüfen..."),
     ]
 
     for name, module, label in sequential:

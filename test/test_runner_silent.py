@@ -71,10 +71,34 @@ def test_real_finding_has_all_required_fields():
             assert isinstance(f["solution"], str) and f["solution"], f"{f['id']}.solution must be a non-empty string"
 
 
+def test_soup_based_modules_run_before_content_quality():
+    """content_quality entfernt nav/header/footer/script aus der gemeinsamen soup. Module, die dort nach
+    Links und Skripten suchen (contact, reviews, ...), müssen vorher laufen, sonst sehen sie den Footer nicht."""
+    html = ('<html><head><title>t</title></head><body><p>' + "Wort " * 30 +
+            '</p><footer><a href="tel:+496131123456">anrufen</a></footer></body></html>')
+
+    def mutating_content_quality(url, html, soup, headers):
+        for tag in soup(["nav", "footer", "header", "aside", "script", "style"]):
+            tag.decompose()
+        return {"findings": []}
+
+    skip = [c for c in runner_checks() if c not in ("contact", "content_quality")]
+    with patch.object(runner, "_fetch", return_value=(html, {}, 42)), \
+            patch.object(runner.content_quality, "run", mutating_content_quality):
+        results = runner.run_audit("https://tobeworks.de", skip=skip)
+    assert results["contact"]["tel_clickable"] is True
+
+
+def runner_checks():
+    from auditor.checks import ALL_CHECKS
+    return list(ALL_CHECKS)
+
+
 if __name__ == "__main__":
     test_no_rich_import_in_runner()
     test_run_audit_silent_returns_dict()
     test_on_progress_callback_fires()
     test_wordpress_result_has_findings_key()
+    test_soup_based_modules_run_before_content_quality()
     test_real_finding_has_all_required_fields()
     print("test_runner_silent: all tests passed")
