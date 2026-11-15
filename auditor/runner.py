@@ -44,14 +44,15 @@ def run_audit(url: str, skip: list[str] | None = None, on_progress: OnProgress |
     wp_result = wordpress.run(url, html, soup, resp_headers)
     results["wordpress"] = wp_result
 
-    # hosting + dns in parallel (no HTML needed)
-    if "hosting" not in skip:
-        notify("hosting", "Hosting & DNS analysieren...")
+    # hosting + dns in parallel (no HTML needed), each one skippable on its own
+    parallel = [(name, mod) for name, mod in (("hosting", hosting), ("dns", dns)) if name not in skip]
+    if parallel:
+        notify("hosting", "Hosting & E-Mail-Schutz analysieren..." if len(parallel) == 2
+               else "Hosting analysieren..." if parallel[0][0] == "hosting" else "E-Mail-Schutz prüfen...")
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-            f_hosting = ex.submit(hosting.run, url, "", None, resp_headers)
-            f_dns = ex.submit(dns.run, url, "", None, resp_headers)
-            results["hosting"] = f_hosting.result()
-            results["dns"] = f_dns.result()
+            futures = {name: ex.submit(mod.run, url, "", None, resp_headers) for name, mod in parallel}
+            for name, future in futures.items():
+                results[name] = future.result()
 
     # WordPress deep (conditional)
     if wp_result.get("is_wordpress") and "wordpress_deep" not in skip:

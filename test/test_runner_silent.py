@@ -94,11 +94,40 @@ def runner_checks():
     return list(ALL_CHECKS)
 
 
+def _run_with_fake_hosting_and_dns(skip_extra):
+    html = "<html><head><title>t</title></head><body></body></html>"
+    skip = [c for c in runner_checks() if c not in ("hosting", "dns")] + skip_extra
+    fake = lambda name: (lambda url, html, soup, headers: {"findings": [], "who": name})  # noqa: E731
+    with patch.object(runner, "_fetch", return_value=(html, {}, 42)), \
+            patch.object(runner.hosting, "run", fake("hosting")), patch.object(runner.dns, "run", fake("dns")):
+        return runner.run_audit("https://tobeworks.de", skip=skip)
+
+
+def test_skip_hosting_keeps_dns():
+    results = _run_with_fake_hosting_and_dns(["hosting"])
+    assert "hosting" not in results
+    assert results["dns"]["who"] == "dns"
+
+
+def test_skip_dns_keeps_hosting():
+    results = _run_with_fake_hosting_and_dns(["dns"])
+    assert "dns" not in results
+    assert results["hosting"]["who"] == "hosting"
+
+
+def test_without_skip_both_run():
+    results = _run_with_fake_hosting_and_dns([])
+    assert results["hosting"]["who"] == "hosting" and results["dns"]["who"] == "dns"
+
+
 if __name__ == "__main__":
     test_no_rich_import_in_runner()
     test_run_audit_silent_returns_dict()
     test_on_progress_callback_fires()
     test_wordpress_result_has_findings_key()
     test_soup_based_modules_run_before_content_quality()
+    test_skip_hosting_keeps_dns()
+    test_skip_dns_keeps_hosting()
+    test_without_skip_both_run()
     test_real_finding_has_all_required_fields()
     print("test_runner_silent: all tests passed")
