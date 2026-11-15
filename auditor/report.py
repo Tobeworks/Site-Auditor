@@ -24,6 +24,7 @@ EXTRA_MODULES = [
     ("ai_visibility", "KI-Crawler & llms.txt"),
     ("contact", "Kontaktweg"),
     ("accessibility_static", "Barrierefreiheit (Schnelltest)"),
+    ("reviews", "Bewertungen & Testimonials"),
 ]
 
 
