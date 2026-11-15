@@ -33,6 +33,12 @@ def _item_host(item: dict) -> str:
     return "" if host == "google.com" else host
 
 
+def _is_homepage(item: dict) -> bool:
+    """Google zeigt die Adresse als 'https://domain.de › pfad › ...'. Ohne Pfadteil ist es die Startseite."""
+    crumb = (item.get("breadcrumb") or "").strip()
+    return "›" not in crumb
+
+
 def fetch_google_result(domain: str) -> dict:
     """So zeigt Google die Domain bei der Suche nach ihrem Namen (Deutschland, Deutsch, Desktop). Wirft nie."""
     key = os.environ.get("DATAFORSEO_API_KEY")
@@ -60,7 +66,11 @@ def fetch_google_result(domain: str) -> dict:
         return _empty("error", domain)
 
     result = _empty("not_found", domain)
-    match = next((i for i in items if isinstance(i, dict) and i.get("type") == "organic" and _item_host(i) == domain), None)
+    # Nur die Startseite: Eine Unterseite hat eine andere Beschreibung, der Vergleich mit der Startseite wäre ein Fehlalarm.
+    match = next(
+        (i for i in items if isinstance(i, dict) and i.get("type") == "organic" and _item_host(i) == domain and _is_homepage(i)),
+        None,
+    )
     if match:
         result.update({
             "status": "found", "title": match.get("title"), "description": match.get("description"),

@@ -13,8 +13,8 @@ FIXTURE = Path(__file__).parent / "fixtures" / "google_result_no_domain_hit.json
 META = "Wir bauen Websites für Unternehmen aus Mainz, schnell, sicher und mit direktem Ansprechpartner. Von der Idee bis zum Betrieb."  # über 120 Zeichen
 
 
-def _item(host, title="Titel", description="Text", links=None, name=None):
-    return {"type": "organic", "title": title, "description": description, "breadcrumb": f"https://{host} › seite",
+def _item(host, title="Titel", description="Text", links=None, name=None, path=""):
+    return {"type": "organic", "title": title, "description": description, "breadcrumb": f"https://{host}{path}",
             "website_name": name or host, "url": "https://google.com/goto?url=x", "links": links}
 
 
@@ -60,13 +60,24 @@ def test_picks_first_organic_result_of_the_domain():
     r = _fetch(_resp([_item("wikipedia.org"), _item("www.x.de", "Erster", "Text eins"), _item("x.de", "Zweiter", "Text zwei")]))
     assert r["status"] == "found"
     assert r["title"] == "Erster" and r["description"] == "Text eins"
-    assert r["display_url"] == "https://www.x.de › seite"
+    assert r["display_url"] == "https://www.x.de"
     assert r["query"] == "x.de" and r["fetched_at"].endswith("Z") or "+00:00" in r["fetched_at"]
 
 
 def test_other_domains_are_ignored():
     for host in ("wikipedia.org", "x.de.evil.com", "notx.de", "jameda.de"):
         assert _fetch(_resp([_item(host)]))["status"] == "not_found", host
+
+
+def test_subpage_hit_is_not_a_match():
+    # Eine Unterseite hat eine andere Beschreibung als die Startseite, der Vergleich wäre ein Fehlalarm.
+    r = _fetch(_resp([_item("x.de", "Insights", "Artikel", path=" › insights")]))
+    assert r["status"] == "not_found" and r["title"] is None
+
+
+def test_homepage_hit_after_a_subpage_hit_is_used():
+    r = _fetch(_resp([_item("x.de", "Insights", "Artikel", path=" › insights"), _item("x.de", "Start", "Willkommen")]))
+    assert r["status"] == "found" and r["title"] == "Start"
 
 
 def test_real_response_without_domain_hit_is_not_found():
