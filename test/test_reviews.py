@@ -73,10 +73,19 @@ def test_page_without_any_signal_has_no_negative_finding():
     assert r["findings"] == []
 
 
+TEXT = "<p>" + "Wir bauen Websites für Unternehmen aus der Region und beraten persönlich. " * 3 + "</p>"
+
+
 def test_schema_without_visible_reviews_is_mittel():
-    r = _run("<p>x</p>", _ld({"@type": "LocalBusiness", "aggregateRating": {"ratingValue": 5, "reviewCount": 3}}))
+    r = _run(TEXT, _ld({"@type": "LocalBusiness", "aggregateRating": {"ratingValue": 5, "reviewCount": 3}}))
     f = next(f for f in r["findings"] if f["id"] == "REV-01")
-    assert f["severity"] == "MITTEL"
+    assert f["severity"] == "MITTEL" and "erkannt" in f["finding"]
+
+
+def test_schema_on_an_almost_empty_page_gets_no_negative_finding():
+    # Vermutlich per JavaScript gerendert, dann wüssten wir nicht, was später sichtbar wird.
+    r = _run("<div id=\"app\"></div>", _ld({"@type": "LocalBusiness", "aggregateRating": {"ratingValue": 5, "reviewCount": 3}}))
+    assert _negative(r) == []
 
 
 def test_schema_with_visible_reviews_has_no_negative_finding():
@@ -114,6 +123,7 @@ if __name__ == "__main__":
     test_testimonial_heading_detected()
     test_page_without_any_signal_has_no_negative_finding()
     test_schema_without_visible_reviews_is_mittel()
+    test_schema_on_an_almost_empty_page_gets_no_negative_finding()
     test_schema_with_visible_reviews_has_no_negative_finding()
     test_widget_without_schema_gets_positive_hint_only()
     test_google_part_is_disabled_without_matching_data()

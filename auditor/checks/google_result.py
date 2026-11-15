@@ -3,6 +3,7 @@ import re
 import threading
 import time
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -98,7 +99,9 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
         domain = _host(url)
         result = fetch_google_result(domain)
         findings = []
-        if result["status"] == "found":
+        # Die Abfrage nach der Domain liefert die Startseite. Deren Text mit einer geprüften Unterseite zu vergleichen wäre ein Fehlalarm.
+        is_root = not urlparse(url).path.strip("/")
+        if result["status"] == "found" and is_root:
             tag = soup.find("meta", attrs={"name": "description"})
             meta = (tag.get("content") or "").strip() if tag else ""
             g_desc = (result["description"] or "").strip()

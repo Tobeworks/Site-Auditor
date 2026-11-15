@@ -24,12 +24,19 @@ def _run(robots_txt=None, llms_txt=None):
         return ai_visibility.run("https://x.de/", "<html></html>", BeautifulSoup("", "lxml"), {})
 
 
-def test_blocked_gptbot_is_reported():
-    result = _run("User-agent: GPTBot\nDisallow: /\n")
-    assert result["blocked_crawlers"] == ["GPTBot"]
+def test_blocked_search_crawler_is_reported():
+    result = _run("User-agent: OAI-SearchBot\nDisallow: /\n")
+    assert result["blocked_crawlers"] == ["OAI-SearchBot"]
     f = next(f for f in result["findings"] if f["id"] == "KIS-01")
     assert f["severity"] == "MITTEL"
-    assert "GPTBot" in f["finding"]
+    assert "OAI-SearchBot" in f["finding"] and "KI-Suche" in f["impact"]
+
+
+def test_training_only_block_is_listed_but_gives_no_finding():
+    # Das Training zu sperren ist eine verbreitete, bewusste Entscheidung und sagt nichts über Antworten in KI-Suchen.
+    result = _run("User-agent: GPTBot\nUser-agent: CCBot\nUser-agent: Google-Extended\nDisallow: /\n\nUser-agent: OAI-SearchBot\nAllow: /\n")
+    assert result["blocked_crawlers"] == ["GPTBot", "Google-Extended", "CCBot"] or set(result["blocked_crawlers"]) == {"GPTBot", "CCBot", "Google-Extended"}
+    assert not any(f["id"] == "KIS-01" for f in result["findings"])
 
 
 def test_wildcard_disallow_alone_is_not_an_ai_finding():
@@ -51,7 +58,8 @@ def test_partial_disallow_is_not_blocked():
 
 def test_several_agents_in_one_group_are_all_blocked():
     result = _run("User-agent: GPTBot\nUser-agent: PerplexityBot\nDisallow: /\n")
-    assert result["blocked_crawlers"] == ["GPTBot", "PerplexityBot"]
+    assert set(result["blocked_crawlers"]) == {"GPTBot", "PerplexityBot"}
+    assert "PerplexityBot" in next(f for f in result["findings"] if f["id"] == "KIS-01")["finding"]
 
 
 def test_no_robots_txt_no_finding():
@@ -85,7 +93,8 @@ def test_error_path_returns_error_key():
 
 
 if __name__ == "__main__":
-    test_blocked_gptbot_is_reported()
+    test_blocked_search_crawler_is_reported()
+    test_training_only_block_is_listed_but_gives_no_finding()
     test_wildcard_disallow_alone_is_not_an_ai_finding()
     test_allow_after_disallow_is_not_blocked()
     test_partial_disallow_is_not_blocked()

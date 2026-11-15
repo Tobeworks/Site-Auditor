@@ -45,11 +45,11 @@ def _fetch(payload=None, client=None, key="k"):
         return google_result.fetch_google_result("x.de")
 
 
-def _run(payload, head="", key="k"):
+def _run(payload, head="", key="k", url="https://www.x.de/"):
     google_result._GOOGLE_CACHE.clear()
     html = f"<html><head>{head}</head><body><p>x</p></body></html>"
     with patch.dict(os.environ, {"DATAFORSEO_API_KEY": key}), patch("httpx.Client", return_value=_client(payload)):
-        return google_result.run("https://www.x.de/", html, BeautifulSoup(html, "lxml"), {})
+        return google_result.run(url, html, BeautifulSoup(html, "lxml"), {})
 
 
 def _by_id(result):
@@ -168,6 +168,15 @@ def test_title_changed_by_google_is_mittel():
 def test_similar_title_is_no_finding():
     r = _run(_resp([_item("x.de", "Muster GmbH | Webdesign aus Mainz", "Text")]), "<title>Muster GmbH Webdesign Mainz</title>")
     assert "GOO-02" not in _by_id(r)
+
+
+def test_checked_subpage_is_not_compared_with_the_homepage_hit():
+    # Die Abfrage nach der Domain liefert die Startseite. Deren Text ist nicht der Text der geprüften Unterseite.
+    head = f'<meta name="description" content="{META}"><title>Leistungen</title>'
+    r = _run(_resp([_item("x.de", "Ganz anderer Titel", "Ganz anderer Text über etwas völlig anderes hier")]), head, url="https://www.x.de/leistungen/")
+    assert r["status"] == "found" and r["findings"] == []
+    r = _run(_resp([_item("x.de", "Ganz anderer Titel", "Ganz anderer Text über etwas völlig anderes hier")]), head, url="https://www.x.de/")
+    assert {"GOO-01", "GOO-02"} <= set(_by_id(r))
 
 
 def test_run_without_hit_or_key_has_no_findings_and_never_raises():

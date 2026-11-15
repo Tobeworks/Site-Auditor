@@ -32,14 +32,17 @@ def _client(response=None, status=200, exc=None, bad_json=False):
     return client
 
 
-def _run(body="<p>x</p>", head=HEAD, client=None, key="test-key"):
+BODY = "<p>" + "Wir bauen Websites für Unternehmen aus der Region und beraten persönlich. " * 3 + "</p>"
+
+
+def _run(body=BODY, head=HEAD, client=None, key="test-key", url=URL):
     reviews._PLACES_CACHE.clear()
     html = f"<html><head>{head}</head><body>{body}</body></html>"
     env = {"GOOGLE_PLACES_API_KEY": key} if key else {}
     with patch.dict(os.environ, env, clear=False), patch("httpx.Client", return_value=client or _client(GOOD)):
         if not key:
             os.environ.pop("GOOGLE_PLACES_API_KEY", None)
-        return reviews.run(URL, html, BeautifulSoup(html, "lxml"), {})
+        return reviews.run(url, html, BeautifulSoup(html, "lxml"), {})
 
 
 def _ids(result):
@@ -73,6 +76,7 @@ def test_found_with_reviews_but_none_on_page_is_mittel_with_numbers():
     f = _ids(_run())["REV-02"]
     assert f["severity"] == "MITTEL"
     assert "4,8" in f["finding"] and "47" in f["finding"]
+    assert "erkannt" in f["finding"]   # nur eine Aussage über das, was erkannt wurde
 
 
 def test_found_and_shown_on_page_is_positive():
@@ -134,6 +138,61 @@ def test_address_mismatch_compares_postcode():
     assert "REV-04" not in _ids(_run(body="<p>Keine Adresse hier</p>"))
 
 
+def test_js_shell_page_gets_no_negative_finding():
+    r = _run(body='<div id="app"></div><script src="/app.js"></script>')
+    assert r["google"]["status"] == "found"
+    assert "REV-02" not in _ids(r)
+
+
+def test_unknown_review_wording_prevents_negative_finding():
+    text = "Erfahrungen unserer Gäste ★★★★★ " + "Wir bauen Websites für Unternehmen aus der Region. " * 3
+    assert "REV-02" not in _ids(_run(body=f"<p>{text}</p>"))
+    assert "REV-02" not in _ids(_run(body=BODY + '<a href="/referenzen/">Mehr</a>'))
+    assert "REV-02" not in _ids(_run(body=BODY + '<img src="a.png" alt="5 Sterne Bewertung">'))
+
+
+def test_schema_with_text_hint_has_no_negative_finding():
+    ld = json.dumps({"@type": "LocalBusiness", "aggregateRating": {"ratingValue": 5, "reviewCount": 3}})
+    head = f'<script type="application/ld+json">{ld}</script>'
+    assert "REV-01" not in _ids(_run(body="<h2>Erfahrungen</h2><p>★★★★★ sehr gut</p>", head=head, key=None))
+    assert _ids(_run(body=BODY, head=head, key=None))["REV-01"]["severity"] == "MITTEL"
+
+
+def test_two_places_with_the_same_domain_are_ambiguous():
+    second = {**GOOD["places"][0], "formattedAddress": "Domstr. 5, 50667 Köln", "rating": 3.1}
+    r = _run(client=_client({"places": [GOOD["places"][0], second]}))
+    assert r["google"]["status"] == "not_matched"
+
+
+def test_path_must_match_for_shared_hosts():
+    foreign = {"places": [{**GOOD["places"][0], "websiteUri": "https://facebook.com/anderefirma", "rating": 1.2}]}
+    r = _run(client=_client(foreign), url="https://facebook.com/meinefirma", head="")
+    assert r["google"]["status"] == "not_matched" and r["google"]["rating"] is None
+    same = {"places": [{**GOOD["places"][0], "websiteUri": "https://facebook.com/meinefirma"}]}
+    assert _run(client=_client(same), url="https://facebook.com/meinefirma", head="")["google"]["status"] == "found"
+
+
+def test_foreign_phone_formats_are_not_compared():
+    assert "REV-03" not in _ids(_run(body='<a href="tel:+4312345678">anrufen</a>', client=_client({"places": [{**GOOD["places"][0], "nationalPhoneNumber": "01 2345678"}]})))
+
+
+def test_percent_encoded_tel_link_is_decoded():
+    assert "REV-03" not in _ids(_run(body='<a href="tel:+49%206131%20123456">anrufen</a>'))
+
+
+def test_unlabeled_numbers_and_opening_hours_are_not_phone_numbers():
+    body = "<p>Mo-Fr 09-12 / 14-18 Uhr, Steuernummer 026 123 45678</p>"
+    assert "REV-03" not in _ids(_run(body=body))
+
+
+def test_postcode_only_from_street_addresses_not_from_any_number():
+    assert "REV-04" not in _ids(_run(body="<p>Schon 15000 Kunden vertrauen uns.</p>"))
+    assert "REV-04" not in _ids(_run(body="<p>Postfach 1234, 55001 Mainz</p>"))
+    ld = json.dumps({"@type": "LocalBusiness", "name": "Muster GmbH", "address": {"addressLocality": "Mainz", "postalCode": "55124"}})
+    r = _run(body="<p>x</p>", head=f'<script type="application/ld+json">{ld}</script>')
+    assert _ids(r)["REV-04"]["severity"] == "MITTEL"
+
+
 if __name__ == "__main__":
     test_without_api_key_is_disabled_and_makes_no_request()
     test_match_requires_same_domain()
@@ -147,4 +206,13 @@ if __name__ == "__main__":
     test_phone_mismatch_is_reported_only_when_page_has_a_phone()
     test_phone_formats_are_normalized()
     test_address_mismatch_compares_postcode()
+    test_js_shell_page_gets_no_negative_finding()
+    test_unknown_review_wording_prevents_negative_finding()
+    test_schema_with_text_hint_has_no_negative_finding()
+    test_two_places_with_the_same_domain_are_ambiguous()
+    test_path_must_match_for_shared_hosts()
+    test_foreign_phone_formats_are_not_compared()
+    test_percent_encoded_tel_link_is_decoded()
+    test_unlabeled_numbers_and_opening_hours_are_not_phone_numbers()
+    test_postcode_only_from_street_addresses_not_from_any_number()
     print("test_reviews_places: all tests passed")

@@ -4,11 +4,13 @@ from urllib.parse import urlparse
 
 from auditor.findings import finding
 
-# KI-Crawler, die eine robots.txt gezielt sperren kann. Anbieter ändern Namen, bei Bedarf ergänzen.
-AI_CRAWLERS = [
-    "GPTBot", "OAI-SearchBot", "ChatGPT-User", "ClaudeBot", "anthropic-ai",
-    "PerplexityBot", "Google-Extended", "CCBot", "Applebot-Extended",
-]
+# KI-Crawler, die eine robots.txt gezielt sperren kann. Anbieter ändern Namen und Zwecke, bei Bedarf prüfen und ergänzen.
+# Zweck laut Anbieterangaben und Fachquellen (Stand 15.11.2026, die Quellen sind sich bei ClaudeBot und PerplexityBot nicht
+# ganz einig, deshalb zählen die beiden hier nicht als Suche): nur das Sperren von Such-Crawlern verhindert, dass die Seite
+# in KI-Suchen und Antworten auftaucht. Das Sperren des Trainings ist eine verbreitete, bewusste Entscheidung.
+SEARCH_CRAWLERS = ["OAI-SearchBot", "ChatGPT-User", "PerplexityBot"]
+TRAINING_CRAWLERS = ["GPTBot", "ClaudeBot", "anthropic-ai", "Google-Extended", "CCBot", "Applebot-Extended"]
+AI_CRAWLERS = SEARCH_CRAWLERS + TRAINING_CRAWLERS
 UA = {"User-Agent": "Mozilla/5.0 (compatible; site-auditor/1.0)"}
 
 
@@ -64,10 +66,11 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
             llms = _get(client, f"{base}/llms.txt")
 
         blocked = [bot for bot in AI_CRAWLERS if robots and _blocked(_groups(robots), bot)]
-        if blocked:
+        blocked_search = [bot for bot in blocked if bot in SEARCH_CRAWLERS]
+        if blocked_search:
             findings.append(finding(
-                "KIS-01", "MITTEL", f"robots.txt sperrt KI-Crawler: {', '.join(blocked)}",
-                "ChatGPT, Claude & Co können deine Seite dann nicht lesen und nicht zitieren. Das kann eine bewusste Entscheidung sein.",
+                "KIS-01", "MITTEL", f"robots.txt sperrt KI-Such-Crawler: {', '.join(blocked_search)}",
+                "Deine Seite kann in der KI-Suche dieser Anbieter nicht gelesen und nicht zitiert werden. Das kann eine bewusste Entscheidung sein.",
                 solution="Wenn du in KI-Antworten vorkommen willst, nimm die Sperre dieser Crawler aus der robots.txt. Wenn nicht, ist alles in Ordnung.",
             ))
 
