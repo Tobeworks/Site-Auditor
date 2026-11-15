@@ -1,8 +1,20 @@
 import httpx
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Comment, NavigableString
 from urllib.parse import urlparse
 
 from auditor.findings import finding
+
+
+def _heading_text(tag) -> str:
+    """Text einer Überschrift wie im Browser: <br> trennt, Leerzeichen vor und nach Inline-Elementen bleiben.
+    get_text(strip=True) hat sie entfernt und aus 'die <span>sich' ein 'diesich' gemacht."""
+    parts = []
+    for node in tag.descendants:
+        if getattr(node, "name", None) == "br":
+            parts.append(" ")
+        elif isinstance(node, NavigableString) and not isinstance(node, Comment):
+            parts.append(str(node))
+    return " ".join("".join(parts).split())
 
 
 def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
@@ -21,7 +33,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
         meta_description_length = len(meta_description) if meta_description else 0
 
         # H1
-        h1_tags = [h.get_text(strip=True) for h in soup.find_all("h1")]
+        h1_tags = [_heading_text(h) for h in soup.find_all("h1")]
         h1_count = len(h1_tags)
 
         # Canonical

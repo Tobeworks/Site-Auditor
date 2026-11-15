@@ -43,8 +43,30 @@ def test_error_path_returns_error_key():
     assert "error" in result
 
 
+def _h1(inner: str):
+    html = f"<html><head><title>t</title></head><body><h1>{inner}</h1></body></html>"
+    return seo.run("https://tobeworks.de", html, BeautifulSoup(html, "lxml"), {})["h1_tags"][0]
+
+
+def test_h1_text_keeps_the_space_before_an_inline_element():
+    # Echte Startseite: Text, Leerzeichen, dann <span>. get_text(strip=True) machte daraus "diesich".
+    assert _h1('Websites für Unternehmen, die <span class="x">sich keine Panne leisten können.</span>') == \
+        "Websites für Unternehmen, die sich keine Panne leisten können."
+
+
+def test_h1_text_treats_br_as_a_space():
+    assert _h1("Zeile eins<br>Zeile zwei") == "Zeile eins Zeile zwei"
+
+
+def test_h1_text_does_not_split_words_inside_inline_elements():
+    assert _h1("Tobe<b>works</b>") == "Tobeworks"
+
+
 if __name__ == "__main__":
     test_missing_title_is_hoch_with_solution()
     test_clean_page_has_positiv_findings_and_no_missing_title()
     test_error_path_returns_error_key()
+    test_h1_text_keeps_the_space_before_an_inline_element()
+    test_h1_text_treats_br_as_a_space()
+    test_h1_text_does_not_split_words_inside_inline_elements()
     print("test_seo: all tests passed")
