@@ -29,6 +29,38 @@ EXTRA_MODULES = [
 ]
 
 
+def _score_sections(results: dict) -> list[str]:
+    from auditor import scoring  # lokal, damit report.py ohne Zyklus importierbar bleibt
+    score = results["score"]
+    lines = [_section_header("Score-Berechnung"), score["formula"], ""]
+    overall = score["overall"]
+    lines.append(f"**Gesamt: {str(overall).replace('.', ',')} von 10**\n" if overall is not None else "**Gesamt: nicht berechenbar**\n")
+    lines.append("| Kategorie | Punkte |")
+    lines.append("|---|---|")
+    for category, points in score["categories"].items():
+        lines.append(f"| {category} | {str(points).replace('.', ',')} |")
+    if score["deductions"]:
+        lines += ["", "| Kennung | Kategorie | Schweregrad | Abzug |", "|---|---|---|---|"]
+        for d in score["deductions"]:
+            lines.append(f"| {d['id']} | {d['category']} | {d['severity']} | {str(d['points']).replace('.', ',')} |")
+    lines.append(_section_header("Maßnahmenplan"))
+    open_items = scoring.open_findings(results)
+    for timeframe in ("kurzfristig", "mittelfristig", "langfristig"):
+        group = sorted(
+            (f for _, f in open_items if f.get("timeframe") == timeframe),
+            key=lambda f: (scoring.SEVERITY_ORDER[f["severity"]], (f.get("effort_days") or (0, 0))[0], f["id"]),
+        )
+        if not group:
+            continue
+        lines.append(f"**{timeframe.capitalize()}**\n")
+        for f in group:
+            lo, hi = f["effort_days"]
+            lines.append(f"- **[{f['id']}]** {f['finding']} (ca. {str(lo).replace('.', ',')} bis {str(hi).replace('.', ',')} Tage)")
+        lines.append("")
+    lines.append("*Die Aufwände sind Schätzwerte zur Priorisierung, kein Angebot.*\n")
+    return lines
+
+
 def _section_header(title: str) -> str:
     return f"\n## {title}\n"
 
@@ -424,6 +456,9 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
             lines.append(f"⚪ Fehler: {d['error']}\n")
         else:
             lines.append(_findings_list(d.get("findings", [])))
+
+    if isinstance(results.get("score"), dict):
+        lines += _score_sections(results)
 
     lines.append("\n---")
     lines.append(f"*Generiert mit Tobeworks Site Auditor v{__version__}*")

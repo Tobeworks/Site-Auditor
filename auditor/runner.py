@@ -5,6 +5,7 @@ import httpx
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
+from auditor import scoring
 from auditor.checks import (
     wordpress, wordpress_deep, seo, security, performance,
     broken_links, a11y, structured_data, markup, legal, tech_stack,
@@ -89,6 +90,9 @@ def run_audit(url: str, skip: list[str] | None = None, on_progress: OnProgress |
     if "a11y" not in skip:
         notify("a11y", "Barrierefreiheit prüfen (Playwright)...")
         results["a11y"] = a11y.run(url, html, soup, resp_headers)
+
+    scoring.apply_effort(results)
+    results["score"] = scoring.build_score(results)
 
     notify("done", "Analyse abgeschlossen")
     return results

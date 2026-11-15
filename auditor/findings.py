@@ -42,6 +42,22 @@ def finding(
     }
 
 
+# Welcher Kennungs-Präfix gehört zu welchem Modul. 'wordpress' fehlt absichtlich: die Erkennung läuft immer
+# und sagt nichts darüber, ob eine Kategorie geprüft wurde.
+MODULE_PREFIX: dict[str, str] = {
+    "seo": "SEO", "structured_data": "SDA", "performance": "PRF", "security": "SEC", "hosting": "HST",
+    "social": "SOC", "broken_links": "LNK", "markup": "MKP", "tech_stack": "TCH", "wordpress_deep": "WPD",
+    "dns": "DNS", "content_quality": "CNT", "legal": "LGL", "a11y": "A11", "ai_visibility": "KIS",
+    "contact": "KON", "accessibility_static": "BAR", "reviews": "REV", "google_result": "GOO",
+}
+
+# Standard-Aufwandsspanne in Personentagen und Zeithorizont je Schweregrad (Schätzung, kein Angebot).
+EFFORT_BY_SEVERITY = {
+    "KRITISCH": ((0.5, 1.5), "kurzfristig"),
+    "HOCH": ((0.25, 1.0), "kurzfristig"),
+    "MITTEL": ((0.1, 0.5), "mittelfristig"),
+}
+
 # Maps each module's Kennung prefix to one of the 7 Paket-4 scoring categories.
 # Not consumed in Paket 1+2 — kept here so Paket 4 doesn't have to re-derive it.
 CATEGORY_MAP: dict[str, str] = {
