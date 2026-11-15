@@ -4,5 +4,5 @@
 ALL_CHECKS = [
     "wordpress", "wordpress_deep", "seo", "security", "performance",
     "broken_links", "structured_data", "markup", "legal", "tech_stack",
-    "social", "hosting", "dns", "ai_visibility", "contact", "accessibility_static", "reviews", "content_quality", "a11y",
+    "social", "hosting", "dns", "ai_visibility", "contact", "accessibility_static", "reviews", "google_result", "content_quality", "a11y",
 ]

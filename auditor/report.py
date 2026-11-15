@@ -25,6 +25,7 @@ EXTRA_MODULES = [
     ("contact", "Kontaktweg"),
     ("accessibility_static", "Barrierefreiheit (Schnelltest)"),
     ("reviews", "Bewertungen & Testimonials"),
+    ("google_result", "Google-Treffer"),
 ]
 
 

@@ -1,0 +1,53 @@
+{
+ "status_code": 20000,
+ "tasks": [
+  {
+   "status_code": 20000,
+   "cost": 0.002,
+   "result": [
+    {
+     "keyword": "4aviators.de",
+     "items": [
+      {
+       "type": "organic",
+       "rank_group": 1,
+       "title": "4Flight.de está a la venta",
+       "description": "El dominio 4Flight.de está en venta. Compre este dominio ahora a través de Buy Now a un precio fijo con servicio de fideicomisario de ELITEDOMAINS.",
+       "breadcrumb": "https://4flight.de › ...",
+       "website_name": "4flight.de",
+       "links": null,
+       "url": "https://google.com/goto?url=redacted"
+      },
+      {
+       "type": "organic",
+       "rank_group": 2,
+       "title": "Hosted by one.com",
+       "description": "www.4airpower.de is hosted by one.com. Build your website. Build your dream website fast and easy, without any coding. Learn more. Find your own domain. This ...",
+       "breadcrumb": "http://www.4airpower.de",
+       "website_name": "4airpower.de",
+       "links": null,
+       "url": "https://google.com/goto?url=redacted"
+      },
+      {
+       "type": "organic",
+       "rank_group": 3,
+       "title": "4Flight.de est à vendre",
+       "description": "Le domaine4Flight.deest à vendre · Paiement sécurisé avec protection de l'acheteur · Facture automatique par e-mail · Transmission simple en temps réel ...",
+       "breadcrumb": "https://4flight.de › ...",
+       "website_name": "4flight.de",
+       "links": null,
+       "url": "https://google.com/goto?url=redacted"
+      },
+      {
+       "type": "knowledge_graph",
+       "rank_group": 1,
+       "title": "4Aviators Charter & Training GmbH",
+       "description": null,
+       "url": "https://google.com/goto?url=redacted"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
