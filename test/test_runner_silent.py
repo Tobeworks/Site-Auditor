@@ -18,7 +18,8 @@ def test_run_audit_silent_returns_dict():
         # Skip every check module — we're only proving the plumbing (no on_progress) works.
         all_checks = ["wordpress_deep", "seo", "security", "performance", "broken_links",
                       "structured_data", "markup", "legal", "tech_stack", "social",
-                      "hosting", "dns", "content_quality", "a11y"]
+                      "hosting", "dns", "content_quality", "a11y",
+                      "ai_visibility", "contact", "accessibility_static", "reviews", "google_result"]
         results = runner.run_audit("https://tobeworks.de", skip=all_checks)
     assert isinstance(results, dict)
     assert "wordpress" in results  # only check that always runs regardless of skip
@@ -30,7 +31,8 @@ def test_on_progress_callback_fires():
     with patch.object(runner, "_fetch", return_value=(fake_html, {}, 42)):
         all_checks = ["wordpress_deep", "seo", "security", "performance", "broken_links",
                       "structured_data", "markup", "legal", "tech_stack", "social",
-                      "hosting", "dns", "content_quality", "a11y"]
+                      "hosting", "dns", "content_quality", "a11y",
+                      "ai_visibility", "contact", "accessibility_static", "reviews", "google_result"]
         runner.run_audit("https://tobeworks.de", skip=all_checks, on_progress=lambda n, m: calls.append((n, m)))
     assert any(n == "start" for n, _ in calls)
     assert any(n == "done" for n, _ in calls)
@@ -44,7 +46,8 @@ def test_wordpress_result_has_findings_key():
     with patch.object(runner, "_fetch", return_value=(fake_html, {}, 42)):
         all_checks = ["wordpress_deep", "seo", "security", "performance", "broken_links",
                       "structured_data", "markup", "legal", "tech_stack", "social",
-                      "hosting", "dns", "content_quality", "a11y"]
+                      "hosting", "dns", "content_quality", "a11y",
+                      "ai_visibility", "contact", "accessibility_static", "reviews", "google_result"]
         results = runner.run_audit("https://tobeworks.de", skip=all_checks)
     assert "findings" in results["wordpress"]
     assert "issues" not in results["wordpress"]

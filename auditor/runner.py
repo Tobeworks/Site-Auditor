@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 from auditor.checks import (
     wordpress, wordpress_deep, seo, security, performance,
     broken_links, a11y, structured_data, markup, legal, tech_stack,
-    social, hosting, dns, content_quality,
+    social, hosting, dns, content_quality, ai_visibility,
 )
 
 OnProgress = Callable[[str, str], None]
@@ -70,6 +70,7 @@ def run_audit(url: str, skip: list[str] | None = None, on_progress: OnProgress |
         ("tech_stack", tech_stack, "Tech-Stack erkennen..."),
         ("social", social, "Social & Crawlability prüfen..."),
         ("content_quality", content_quality, "Content-Qualität prüfen..."),
+        ("ai_visibility", ai_visibility, "KI-Crawler prüfen..."),
     ]
 
     for name, module, label in sequential:

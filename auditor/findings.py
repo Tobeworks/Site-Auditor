@@ -58,6 +58,7 @@ CATEGORY_MAP: dict[str, str] = {
     "WPD": "Technik & Index",
     "DNS": "Technik & Index",
     "CNT": "Content & Sichtbarkeit",
+    "KIS": "Content & Sichtbarkeit",
     "LGL": "Trust & Legal",
     "A11": "UX & Funnel",
 }

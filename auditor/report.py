@@ -19,6 +19,12 @@ def _status(findings: list, error: bool = False) -> str:
     return "✅"
 
 
+# Module ohne eigene Tabelle: Überschrift plus Findings-Liste (Reihenfolge wie im Runner).
+EXTRA_MODULES = [
+    ("ai_visibility", "KI-Crawler & llms.txt"),
+]
+
+
 def _section_header(title: str) -> str:
     return f"\n## {title}\n"
 
@@ -82,7 +88,7 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
         ("hosting", "Hosting & Server"),
         ("dns", "DNS"),
         ("tech_stack", "Tech Stack"),
-    ]
+    ] + EXTRA_MODULES
 
     for key, label in module_order:
         if key not in results:
@@ -403,6 +409,16 @@ def build(url: str, results: dict, ai_summary: str | None = None, fmt: str = "md
             lines.append(f"| Page Builder | {d.get('page_builder') or '-'} |")
             lines.append(f"| Framework | {d.get('framework') or '-'} |")
             lines.append("")
+            lines.append(_findings_list(d.get("findings", [])))
+
+    for key, label in EXTRA_MODULES:
+        if key not in results:
+            continue
+        lines.append(_section_header(label))
+        d = results[key]
+        if "error" in d:
+            lines.append(f"⚪ Fehler: {d['error']}\n")
+        else:
             lines.append(_findings_list(d.get("findings", [])))
 
     lines.append("\n---")
