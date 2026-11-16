@@ -156,6 +156,7 @@ def _fetch(url: str, url_validator=None) -> tuple[str | None, dict, int]:
                     h["_response_time_ms"] = elapsed
                     h["_raw_version"] = str(r.http_version)
                     h["_fallback_used"] = candidate != url
+                    h["_status_code"] = r.status_code
                     return r.text, h, elapsed
             except _BlockedRedirect:
                 return None, {}, 0

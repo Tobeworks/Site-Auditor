@@ -1,4 +1,7 @@
 """Assert-based smoke test for auditor.checks.ai_visibility. Run: uv run python test/test_ai_visibility.py"""
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch, MagicMock
 from bs4 import BeautifulSoup
 from auditor.checks import ai_visibility
@@ -92,16 +95,196 @@ def test_error_path_returns_error_key():
     assert "error" in result
 
 
+
+# ---- Zugang: echte Bot-Abrufe gegen einen lokalen Server (kein Internet) ----
+
+PROBED = ["OAI-SearchBot", "Claude-SearchBot", "PerplexityBot", "ChatGPT-User", "Claude-User", "Perplexity-User"]
+TRAINING = ["GPTBot", "ClaudeBot", "anthropic-ai", "Google-Extended", "CCBot", "Applebot-Extended"]
+OK_HTML = "<html><body><h1>Willkommen</h1></body></html>"
+
+
+def _serve(rule=None, robots=None, delay=None):
+    """rule(user_agent, path) -> (status, body, headers) oder None für die normale Seite. Liefert (server, basis_url, zugriffe)."""
+    hits = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            ua = self.headers.get("User-Agent", "")
+            hits.append((self.path, ua))
+            if self.path == "/robots.txt":
+                status, body, headers = (200, robots, {}) if robots is not None else (404, "", {})
+            else:
+                if delay and delay(ua):
+                    time.sleep(delay(ua))
+                status, body, headers = (rule(ua, self.path) if rule else None) or (200, OK_HTML, {})
+            data = body.encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://127.0.0.1:{server.server_address[1]}", hits
+
+
+def _bot_hits(hits, bots=PROBED + TRAINING):
+    return [(path, ua) for path, ua in hits if any(bot in ua for bot in bots)]
+
+
+def _run_live(base, headers=None, html=OK_HTML):
+    headers = {"_status_code": 200} if headers is None else headers
+    return ai_visibility.run(base + "/", html, BeautifulSoup(html, "lxml"), headers)
+
+
+def _entry(result, name):
+    return next(c for c in result["crawlers"] if c["name"] == name)
+
+
+def test_crawlers_list_has_group_robots_and_server_status():
+    server, base, hits = _serve()
+    try:
+        result = _run_live(base)
+    finally:
+        server.shutdown()
+    assert "error" not in result
+    assert {c["name"] for c in result["crawlers"]} == set(PROBED + TRAINING)
+    for bot, group in (("OAI-SearchBot", "search"), ("Claude-SearchBot", "search"), ("PerplexityBot", "search"),
+                       ("ChatGPT-User", "user"), ("Claude-User", "user"), ("Perplexity-User", "user"), ("GPTBot", "training")):
+        assert _entry(result, bot)["group"] == group, bot
+    for bot in PROBED:
+        assert _entry(result, bot)["server"] == "ok" and _entry(result, bot)["robots"] in ("allowed", "unknown"), bot
+    for bot in TRAINING:
+        assert _entry(result, bot)["server"] == "unknown", bot
+    assert _bot_hits(hits, TRAINING) == []   # Training wird nie abgerufen
+    assert not any(f["id"] == "KIS-03" for f in result["findings"])
+
+
+def test_server_rejecting_a_search_bot_is_a_finding():
+    server, base, _ = _serve(lambda ua, path: (403, "Verboten", {}) if "OAI-SearchBot" in ua else None)
+    try:
+        result = _run_live(base)
+    finally:
+        server.shutdown()
+    assert _entry(result, "OAI-SearchBot")["server"] == "blocked"
+    assert all(_entry(result, bot)["server"] == "ok" for bot in PROBED if bot != "OAI-SearchBot")
+    f = next(f for f in result["findings"] if f["id"] == "KIS-03")
+    assert f["severity"] == "HOCH" and f["solution"] and "OAI-SearchBot" in f["finding"] + f["solution"]
+
+
+def test_challenge_page_counts_as_blocked():
+    server, base, _ = _serve(lambda ua, path: (200, "<html><title>Just a moment...</title></html>", {}) if "PerplexityBot" in ua else None)
+    try:
+        result = _run_live(base)
+    finally:
+        server.shutdown()
+    assert _entry(result, "PerplexityBot")["server"] == "blocked"
+
+
+def test_unknown_baseline_gives_no_finding():
+    for headers in ({}, {"_status_code": 403}):
+        server, base, hits = _serve(lambda ua, path: (403, "Verboten", {}))
+        try:
+            result = _run_live(base, headers)
+        finally:
+            server.shutdown()
+        assert all(c["server"] == "unknown" for c in result["crawlers"]), headers
+        assert not any(f["id"] == "KIS-03" for f in result["findings"])
+        assert _bot_hits(hits) == []
+
+
+def test_robots_blocked_bot_is_not_probed_and_not_double_reported():
+    server, base, hits = _serve(lambda ua, path: (403, "Verboten", {}) if "OAI-SearchBot" in ua else None,
+                                robots="User-agent: OAI-SearchBot\nDisallow: /\n")
+    try:
+        result = _run_live(base)
+    finally:
+        server.shutdown()
+    entry = _entry(result, "OAI-SearchBot")
+    assert entry["robots"] == "blocked" and entry["server"] == "unknown"
+    assert _bot_hits(hits, ["OAI-SearchBot"]) == []
+    assert not any(f["id"] == "KIS-03" for f in result["findings"]) and any(f["id"] == "KIS-01" for f in result["findings"])
+
+
+def test_redirect_to_other_host_is_not_followed_and_same_host_is():
+    server_b, base_b, hits_b = _serve()
+
+    def rule(ua, path):
+        if "Claude-User" in ua and path == "/":
+            return 302, "", {"Location": base_b + "/"}
+        if "ChatGPT-User" in ua and path == "/":
+            return 302, "", {"Location": "/landing"}
+        return None
+    server_a, base_a, hits_a = _serve(rule)
+    try:
+        result = _run_live(base_a)
+    finally:
+        server_a.shutdown()
+        server_b.shutdown()
+    assert _entry(result, "Claude-User")["server"] == "unknown" and hits_b == []
+    assert _entry(result, "ChatGPT-User")["server"] == "ok" and any(path == "/landing" for path, _ in hits_a)
+
+
+def test_same_host_ignores_www_and_nothing_else():
+    same = ai_visibility._same_host
+    assert same("https://beispiel.de/", "https://www.beispiel.de/x") and same("https://www.beispiel.de/", "http://beispiel.de/")
+    assert not same("https://beispiel.de/", "https://andere.de/") and not same("https://beispiel.de/", "https://beispiel.de.evil.de/")
+    assert not same("http://127.0.0.1:8000/", "http://127.0.0.1:9000/")
+
+
+def test_probe_failures_do_not_raise():
+    # geschlossener Port
+    import socket
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    result = ai_visibility.run(f"http://127.0.0.1:{port}/", OK_HTML, BeautifulSoup(OK_HTML, "lxml"), {"_status_code": 200})
+    assert "error" not in result and all(c["server"] == "unknown" for c in result["crawlers"])
+    # Zeitüberschreitung
+    server, base, _ = _serve(delay=lambda ua: 1.5 if "Claude-User" in ua else 0)
+    try:
+        with patch.object(ai_visibility, "PROBE_TIMEOUT", 0.3):
+            result = _run_live(base)
+    finally:
+        server.shutdown()
+    assert "error" not in result and _entry(result, "Claude-User")["server"] == "unknown"
+    assert _entry(result, "OAI-SearchBot")["server"] == "ok"
+
+
+def test_probe_request_count_is_limited():
+    server, base, hits = _serve()
+    try:
+        _run_live(base)
+    finally:
+        server.shutdown()
+    assert len(_bot_hits(hits)) == 6
+    # auch mit Weiterleitungsschleife höchstens zehn Abrufe mit Bot-Namen
+    server, base, hits = _serve(lambda ua, path: (302, "", {"Location": "/loop"}) if _bot_hits([("", ua)]) else None)
+    try:
+        _run_live(base)
+    finally:
+        server.shutdown()
+    assert len(_bot_hits(hits)) <= 10, len(_bot_hits(hits))
+
+
+def test_fetch_reports_the_status_code():
+    from auditor import runner
+    server, base, _ = _serve()
+    try:
+        html, headers, _ms = runner._fetch(base + "/")
+    finally:
+        server.shutdown()
+    assert html and headers["_status_code"] == 200
+
+
 if __name__ == "__main__":
-    test_blocked_search_crawler_is_reported()
-    test_training_only_block_is_listed_but_gives_no_finding()
-    test_wildcard_disallow_alone_is_not_an_ai_finding()
-    test_allow_after_disallow_is_not_blocked()
-    test_partial_disallow_is_not_blocked()
-    test_several_agents_in_one_group_are_all_blocked()
-    test_no_robots_txt_no_finding()
-    test_llms_txt_present_is_positive_only()
-    test_missing_llms_txt_gives_no_finding()
-    test_html_soft_404_is_not_an_llms_txt()
-    test_error_path_returns_error_key()
+    for name, fn in list(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            fn()
     print("test_ai_visibility: all tests passed")
