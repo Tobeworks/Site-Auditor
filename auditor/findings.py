@@ -48,7 +48,7 @@ MODULE_PREFIX: dict[str, str] = {
     "seo": "SEO", "structured_data": "SDA", "performance": "PRF", "security": "SEC", "hosting": "HST",
     "social": "SOC", "broken_links": "LNK", "markup": "MKP", "tech_stack": "TCH", "wordpress_deep": "WPD",
     "dns": "DNS", "content_quality": "CNT", "legal": "LGL", "a11y": "A11", "ai_visibility": "KIS",
-    "contact": "KON", "accessibility_static": "BAR", "reviews": "REV", "google_result": "GOO",
+    "contact": "KON", "accessibility_static": "BAR", "reviews": "REV", "google_result": "GOO", "clarity": "KLA",
 }
 
 # Standard-Aufwandsspanne in Personentagen und Zeithorizont je Schweregrad (Schätzung, kein Angebot).
@@ -81,4 +81,5 @@ CATEGORY_MAP: dict[str, str] = {
     "GOO": "OnPage-SEO",
     "LGL": "Trust & Legal",
     "A11": "UX & Funnel",
+    "KLA": "Verständlichkeit",
 }
