@@ -95,7 +95,7 @@ def _collect(url: str, url_validator, timeout_s: float) -> dict:
         return verdicts[host]
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(args=["--no-sandbox"])
+        browser = p.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])  # /dev/shm ist im Container oft nur 64 MB groß
         try:
             # ohne is_mobile, sonst layoutet Chromium Seiten ohne Viewport-Meta mit 980 Pixeln Breite
             context = browser.new_context(viewport=VIEWPORT, has_touch=True)
