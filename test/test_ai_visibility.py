@@ -546,6 +546,33 @@ def test_non_string_schema_types_do_not_break_the_module():
         assert "error" not in result and "crawlers" in result, data
 
 
+def test_checklist_access_is_only_ok_when_every_probed_bot_answered():
+    # Nur einer von sechs Bots antwortete eindeutig: die Liste darf nicht "in Ordnung" sagen
+    def rule(ua, path):
+        return None if "OAI-SearchBot" in ua else (500, "x", {})
+    server, base, _ = _serve(rule)
+    try:
+        result = _run_live(base)
+    finally:
+        server.shutdown()
+    entry = next(c for c in result["checklist"] if c["key"] == "access")
+    assert entry["status"] == "unknown" and "1 von 6" in entry["detail"], entry
+    assert not any(f["id"] == "KIS-03" for f in result["findings"])
+
+
+def test_checklist_render_unknown_explains_why_it_was_not_checked():
+    entry = next(c for c in _base_result()["checklist"] if c["key"] == "render")
+    assert entry["status"] == "unknown" and "Browser" in entry["detail"]
+
+
+def test_checklist_mentions_llms_txt_without_scoring_it():
+    without = next(c for c in _base_result()["checklist"] if c["key"] == "snippets")
+    assert "llms.txt" in without["detail"] and "nicht belegt" in without["detail"] and without["status"] == "ok"
+    with_file = _run(None, "# Seite\n> Kurzbeschreibung\n")
+    detail = next(c for c in with_file["checklist"] if c["key"] == "snippets")["detail"]
+    assert "llms.txt vorhanden" in detail
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

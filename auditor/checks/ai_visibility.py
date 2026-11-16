@@ -261,17 +261,23 @@ def _checklist(result: dict) -> list[dict]:
     robots_blocked = [c["name"] for c in crawlers if c.get("robots") == "blocked" and c.get("group") != "training"]
     if rejected or robots_blocked or "KIS-01" in ids or "KIS-03" in ids:
         access = ("issue", "Gesperrt: " + ", ".join(rejected + [b for b in robots_blocked if b not in rejected]))
-    elif any(c.get("server") == "ok" for c in crawlers):
-        access = ("ok", "Such- und Nutzer-Bots erreichen deine Seite.")
     else:
-        access = ("unknown", "Der Abruf mit Bot-Namen war nicht möglich.")
+        probed = [c for c in crawlers if c.get("group") != "training"]
+        answered = sum(1 for c in probed if c.get("server") == "ok")
+        if probed and answered == len(probed):
+            access = ("ok", "Such- und Nutzer-Bots erreichen deine Seite.")
+        elif answered:
+            # ein Teil hat nicht eindeutig geantwortet (Drosselung, Schutzsystem, Zeitüberschreitung): nicht "in Ordnung" melden
+            access = ("unknown", f"{answered} von {len(probed)} Bots konnten abgerufen werden, bei den übrigen kam keine eindeutige Antwort.")
+        else:
+            access = ("unknown", "Der Abruf mit Bot-Namen war nicht möglich.")
 
     if "KIS-04" in ids:
         render_item = ("issue", f"Nur {render.get('html_words')} von {render.get('rendered_words')} Wörtern stehen im HTML.")
     elif render.get("status") == "ok":
         render_item = ("ok", "Der Text steht schon im HTML, ohne JavaScript.")
     else:
-        render_item = ("unknown", "Nicht geprüft.")
+        render_item = ("unknown", "Nicht geprüft: Der Browser konnte die Seite nicht auswerten, zum Beispiel wegen eines Bot-Schutzes.")
 
     if not structure:
         structure_item = ("unknown", "Nicht geprüft.")
@@ -292,7 +298,8 @@ def _checklist(result: dict) -> list[dict]:
             entity_item = ("unknown", "Es fehlt: " + ", ".join(missing) + ". Das steht im Befund zu strukturierten Daten.")
 
     restricted = (result.get("snippets") or {}).get("restricted") or []
-    snippets = ("issue", "Gesperrt: " + ", ".join(restricted)) if "KIS-07" in ids else ("ok", "Keine Sperre für Textausschnitte.")
+    llms = "llms.txt vorhanden." if result.get("llms_txt") else "Keine llms.txt gefunden, sie ist optional und ein Nutzen ist bisher nicht belegt."
+    snippets = ("issue", "Gesperrt: " + ", ".join(restricted)) if "KIS-07" in ids else ("ok", f"Keine Sperre für Textausschnitte. {llms}")
 
     items = (("access", "KI-Bots kommen auf deine Seite", access), ("render", "Dein Text ist ohne JavaScript lesbar", render_item),
              ("structure", "Deine Seite ist klar gegliedert", structure_item), ("entity", "Deine Firma ist eindeutig beschrieben", entity_item),
