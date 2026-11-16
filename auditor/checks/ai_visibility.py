@@ -1,4 +1,6 @@
 import concurrent.futures
+import json
+import re
 import threading
 
 import httpx
@@ -133,6 +135,106 @@ def _probe(url: str, bot: str, baseline_ok: bool, budget: _Budget, baseline_head
     return "unknown"
 
 
+SKIP_TEXT_IN = {"script", "style", "noscript", "template"}
+PAGE_FURNITURE = ("nav", "header", "footer")  # Listen dort sind Menüs, kein Inhalt
+ORG_TYPES = {"Organization", "LocalBusiness", "Corporation", "ProfessionalService"}
+ARTICLE_TYPES = {"Article", "BlogPosting", "NewsArticle"}
+SNIPPET_TOKENS = {"nosnippet": "nosnippet", "noai": "noai", "noimageai": "noimageai"}
+LONG_PAGE_WORDS = 300
+
+
+def _word_count(soup) -> int:
+    texts = (t for t in soup.find_all(string=True) if t.parent and t.parent.name not in SKIP_TEXT_IN)
+    return sum(len(t.split()) for t in texts)
+
+
+def _types(node) -> set:
+    t = node.get("@type")
+    return set(t) if isinstance(t, list) else {t} if isinstance(t, str) else set()
+
+
+def _json_ld_nodes(soup) -> list[tuple[dict, bool]]:
+    """Alle Schema-Knoten der Seite als (Knoten, oberste Ebene eines Blocks). @graph und Listen werden aufgelöst."""
+    nodes = []
+
+    def walk(data, top):
+        if isinstance(data, list):
+            for item in data:
+                walk(item, False)
+        elif isinstance(data, dict):
+            nodes.append((data, top))
+            if isinstance(data.get("@graph"), list):
+                walk(data["@graph"], False)
+
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            walk(json.loads(script.string or ""), True)
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return nodes
+
+
+def _structure(soup, nodes) -> dict:
+    headings = soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])
+    levels = [int(h.name[1]) for h in headings]
+    questions = sum(1 for h in headings if h.get_text(" ", strip=True).endswith("?"))
+    in_furniture = lambda el: any(p.name in PAGE_FURNITURE for p in el.parents)  # noqa: E731
+    faq_questions = sum(1 for d in soup.find_all("summary") if d.get_text(" ", strip=True).endswith("?"))
+    faq = (any("FAQPage" in _types(n) for n, _ in nodes) or faq_questions >= 2
+           or bool(soup.find(attrs={"itemtype": re.compile(r"schema\.org/FAQPage", re.I)})))
+    return {
+        "heading_skips": sum(1 for a, b in zip(levels, levels[1:]) if b > a + 1),
+        "h2_count": levels.count(2),
+        "question_headings": questions,
+        "lists": sum(1 for el in soup.find_all(["ul", "ol"]) if not in_furniture(el)),
+        "tables": len(soup.find_all("table")),
+        "faq": faq,
+        "words": _word_count(soup),
+    }
+
+
+def _entity(nodes) -> dict:
+    orgs = [n for n, _ in nodes if _types(n) & ORG_TYPES or any(t.endswith("Business") for t in _types(n))]
+    articles = [n for n, _ in nodes if _types(n) & ARTICLE_TYPES]
+    same_as = lambda n: len(n["sameAs"]) if isinstance(n.get("sameAs"), list) else 1 if n.get("sameAs") else 0  # noqa: E731
+    return {
+        "organization": bool(orgs),
+        "logo": any(n.get("logo") for n in orgs),
+        "same_as": max((same_as(n) for n in orgs), default=0),
+        "author": all(n.get("author") for n in articles) if articles else None,
+        "date_modified": all(n.get("dateModified") for n in articles) if articles else None,
+    }
+
+
+def _entity_gaps(nodes) -> list[str]:
+    """Was an der Firma und den Artikeln fehlt. Ausgenommen, was SDA-03 und SDA-04 schon melden: dort prüft structured_data
+    nur Blöcke, deren oberste Ebene genau Organization oder Article ist."""
+    gaps = []
+    for node, top in nodes:
+        types = _types(node)
+        if (types & ORG_TYPES or any(t.endswith("Business") for t in types)) and not (top and types == {"Organization"}):
+            gaps += [g for g, missing in (("logo", not node.get("logo")), ("sameAs", not node.get("sameAs"))) if missing]
+        if types & ARTICLE_TYPES:
+            gaps += [g for g, missing in (("dateModified", not node.get("dateModified")),
+                                          ("author", not node.get("author") and not (top and types == {"Article"}))) if missing]
+    return list(dict.fromkeys(gaps))
+
+
+def _snippet_restrictions(soup, headers: dict) -> list[str]:
+    values = []
+    for meta in soup.find_all("meta", attrs={"name": re.compile(r"^(robots|googlebot|bingbot)$", re.I)}):
+        values.append(meta.get("content") or "")
+    values += [v for k, v in headers.items() if isinstance(k, str) and k.lower() == "x-robots-tag" and isinstance(v, str)]
+    found = []
+    for value in values:
+        for token in (t.strip().lower().replace(" ", "") for t in value.split(",")):
+            # "botname: nosnippet" gilt nur für einen bestimmten Bot und zählt hier nicht, im Zweifel kein Befund
+            kind = "max-snippet:0" if token == "max-snippet:0" else SNIPPET_TOKENS.get(token)
+            if kind and kind not in found:
+                found.append(kind)
+    return found
+
+
 def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
     try:
         parsed = urlparse(url)
@@ -180,6 +282,36 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
                 solution=f"Prüfe Firewall, Bot-Schutz (zum Beispiel bei Cloudflare) und Sicherheits-Plugins und erlaube die Bots {names}, wenn du in KI-Antworten vorkommen willst.",
             ))
 
-        return {"blocked_crawlers": blocked, "llms_txt": has_llms, "crawlers": crawlers, "findings": findings}
+        # Struktur, eindeutige Firma, Übernahme erlaubt
+        nodes = _json_ld_nodes(soup)
+        structure, entity = _structure(soup, nodes), _entity(nodes)
+        restricted = _snippet_restrictions(soup, headers)
+        if structure["words"] >= LONG_PAGE_WORDS and structure["h2_count"] == 0:
+            findings.append(finding(
+                "KIS-05", "MITTEL", "Deine Seite hat viel Text, aber keine Zwischenüberschriften (H2)",
+                "KI-Systeme zerlegen Seiten anhand der Überschriften in Abschnitte. Ohne sie lassen sich einzelne Antworten schlecht herausziehen.",
+                solution="Gliedere den Text mit Zwischenüberschriften (H2), am besten als Fragen, die deine Kunden stellen.",
+            ))
+        gaps = _entity_gaps(nodes)
+        if gaps:
+            findings.append(finding(
+                "KIS-06", "MITTEL", f"Deine Firma ist im Schema nicht vollständig beschrieben, es fehlt: {', '.join(gaps)}",
+                "KI-Systeme ordnen Aussagen nur dann sicher dir zu, wenn Firma, Logo und Profile (sameAs) eindeutig angegeben sind.",
+                solution=f"Ergänze im Schema-Block deiner Firma beziehungsweise des Artikels: {', '.join(gaps)}.",
+            ))
+        if restricted:
+            findings.append(finding(
+                "KIS-07", "MITTEL", f"Deine Seite verbietet das Übernehmen von Textausschnitten ({', '.join(restricted)})",
+                "Suchmaschinen und KI-Systeme dürfen dann keine Ausschnitte deiner Seite anzeigen oder in Antworten übernehmen.",
+                solution="Entferne die Sperre aus dem Robots-Meta-Tag oder dem X-Robots-Tag-Header, wenn Ausschnitte erwünscht sind. Wenn die Sperre Absicht ist, ist alles in Ordnung.",
+            ))
+        if structure["question_headings"] or structure["faq"]:
+            findings.append(finding(
+                "KIS-08", "POSITIV", "Deine Seite enthält Fragen und Antworten",
+                "Fragen als Überschriften und FAQ-Abschnitte lassen sich von KI-Systemen leicht als Antwort übernehmen.",
+            ))
+
+        return {"blocked_crawlers": blocked, "llms_txt": has_llms, "crawlers": crawlers, "structure": structure,
+                "entity": entity, "snippets": {"restricted": restricted}, "findings": findings}
     except Exception as e:
         return {"error": str(e)}

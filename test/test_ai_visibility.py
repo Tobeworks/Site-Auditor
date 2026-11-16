@@ -283,6 +283,115 @@ def test_fetch_reports_the_status_code():
     assert html and headers["_status_code"] == 200
 
 
+
+# ---- Struktur, Firma, Snippet-Sperren (reine Auswertung von soup und headers, kein Netz) ----
+import json as _json
+
+
+def _analyze(html, headers=None):
+    soup = BeautifulSoup(html, "lxml")
+    with patch("httpx.Client", return_value=_client_mock()):
+        return ai_visibility.run("https://x.de/", html, soup, headers or {})
+
+
+def _ld(data):
+    return f'<script type="application/ld+json">{_json.dumps(data)}</script>'
+
+
+def _ids(result):
+    return [f["id"] for f in result["findings"]]
+
+
+def _page(body, head="", words=0):
+    return f"<html><head>{head}</head><body>{body}<p>{'wort ' * words}</p></body></html>"
+
+
+def test_structure_counts_headings_lists_tables_questions_and_faq():
+    html = _page(
+        "<h1>Titel</h1><h2>Was kostet das?</h2><h4>Wie lange dauert es?</h4><ul><li>a</li></ul><table><tr><td>x</td></tr></table>",
+        head=_ld({"@type": "FAQPage", "mainEntity": []}),
+    )
+    s = _analyze(html)["structure"]
+    assert (s["heading_skips"], s["h2_count"], s["question_headings"], s["lists"], s["tables"], s["faq"]) == (1, 1, 2, 1, 1, True)
+    assert s["words"] > 0
+
+
+def test_lists_in_navigation_are_not_counted():
+    html = _page("<nav><ul><li>Menü</li></ul></nav><footer><ul><li>Fuß</li></ul></footer><h1>T</h1><h2>U</h2><ol><li>1</li></ol>")
+    assert _analyze(html)["structure"]["lists"] == 1
+
+
+def test_long_page_without_any_h2_gets_kis_05():
+    result = _analyze(_page("<h1>Titel</h1>", words=350))
+    f = next(f for f in result["findings"] if f["id"] == "KIS-05")
+    assert f["severity"] == "MITTEL" and f["solution"]
+
+
+def test_short_page_never_gets_a_structure_finding():
+    assert "KIS-05" not in _ids(_analyze(_page("<h1>Titel</h1>", words=60)))
+    assert "KIS-05" not in _ids(_analyze(_page("<h1>Titel</h1><h2>Teil</h2>", words=400)))
+
+
+def test_organization_incomplete_in_graph_gets_kis_06_but_top_level_is_left_to_sda():
+    graph = {"@context": "https://schema.org", "@graph": [{"@type": "Organization", "name": "Muster", "url": "https://x.de/"}]}
+    result = _analyze(_page("<h1>T</h1>", head=_ld(graph)))
+    assert "KIS-06" in _ids(result) and result["entity"]["organization"] is True
+    assert result["entity"]["logo"] is False and result["entity"]["same_as"] == 0
+    top = _analyze(_page("<h1>T</h1>", head=_ld({"@type": "Organization", "name": "Muster", "url": "https://x.de/"})))
+    assert "KIS-06" not in _ids(top)   # SDA-04 meldet fehlendes Logo und sameAs dort schon
+    assert top["entity"]["logo"] is False
+
+
+def test_complete_or_missing_organization_gets_no_kis_06():
+    complete = {"@context": "https://schema.org", "@graph": [
+        {"@type": "Organization", "name": "Muster", "url": "https://x.de/", "logo": "https://x.de/l.png", "sameAs": ["https://www.linkedin.com/company/x"]}]}
+    result = _analyze(_page("<h1>T</h1>", head=_ld(complete)))
+    assert "KIS-06" not in _ids(result) and result["entity"]["logo"] is True and result["entity"]["same_as"] == 1
+    none = _analyze(_page("<h1>T</h1>"))
+    assert "KIS-06" not in _ids(none) and none["entity"]["organization"] is False   # das meldet SDA-02
+
+
+def test_article_without_author_or_date_is_reported_only_for_articles():
+    article = {"@type": "Article", "headline": "H", "datePublished": "2026-01-01"}
+    result = _analyze(_page("<h1>T</h1>", head=_ld(article)))
+    assert result["entity"]["author"] is False and result["entity"]["date_modified"] is False
+    f = next(f for f in result["findings"] if f["id"] == "KIS-06")
+    assert "dateModified" in f["finding"] + f["solution"]
+    page = _analyze(_page("<h1>T</h1>"))
+    assert page["entity"]["author"] is None and page["entity"]["date_modified"] is None
+
+
+def test_snippet_restrictions_are_found_in_meta_and_header():
+    html = _page("<h1>T</h1>", head='<meta name="robots" content="index, nosnippet"><meta name="googlebot" content="max-snippet: 0">')
+    result = _analyze(html, {"X-Robots-Tag": "noai, noimageai"})
+    assert set(result["snippets"]["restricted"]) == {"nosnippet", "max-snippet:0", "noai", "noimageai"}
+    f = next(f for f in result["findings"] if f["id"] == "KIS-07")
+    assert f["severity"] == "MITTEL" and "nosnippet" in f["finding"]
+
+
+def test_page_without_restrictions_has_no_kis_07():
+    for html, headers in ((_page("<h1>T</h1>"), {}),
+                          (_page('<h1>T</h1><p data-nosnippet>intern</p>', head='<meta name="robots" content="index, follow, max-snippet:-1">'), {}),
+                          (_page("<h1>T</h1>"), {"x-robots-tag": "otherbot: nosnippet"})):
+        result = _analyze(html, headers)
+        assert result["snippets"]["restricted"] == [] and "KIS-07" not in _ids(result)
+
+
+def test_question_headings_or_faq_give_positive_kis_08():
+    for html in (_page("<h1>T</h1><h2>Was kostet das?</h2>"), _page("<h1>T</h1>", head=_ld({"@type": "FAQPage", "mainEntity": []}))):
+        f = next(f for f in _analyze(html)["findings"] if f["id"] == "KIS-08")
+        assert f["severity"] == "POSITIV"
+    assert "KIS-08" not in _ids(_analyze(_page("<h1>T</h1><h2>Leistungen</h2>")))
+
+
+def test_findings_and_result_stay_valid_without_html():
+    result = ai_visibility.run("https://x.de/", "", BeautifulSoup("", "lxml"), {})
+    assert "error" not in result and result["findings"] == []
+    assert result["structure"]["words"] == 0 and result["structure"]["lists"] == 0
+    assert result["entity"] == {"organization": False, "logo": False, "same_as": 0, "author": None, "date_modified": None}
+    assert result["snippets"] == {"restricted": []}
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):
