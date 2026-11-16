@@ -10,6 +10,7 @@ from auditor.checks import (
     wordpress, wordpress_deep, seo, security, performance,
     broken_links, a11y, structured_data, markup, legal, tech_stack,
     social, hosting, dns, content_quality, ai_visibility, contact, accessibility_static, reviews, google_result,
+    first_view, clarity,
 )
 
 OnProgress = Callable[[str, str], None]
@@ -20,8 +21,11 @@ def run_audit(
     skip: list[str] | None = None,
     on_progress: OnProgress | None = None,
     url_validator: Callable[[str], bool] | None = None,
+    clarity_judge: Callable[[dict], dict | None] | None = None,
 ) -> dict:
-    """url_validator: optional, wird für jedes Weiterleitungsziel der ersten Abfrage aufgerufen. Gibt es False zurück, wird
+    """clarity_judge: optional. Ohne ihn startet kein Browser und es gibt keinen Block `clarity`. Mit ihm liest ein Browser den
+    ersten Handy-Bildschirm und der judge beantwortet, für wen das Angebot ist und was verkauft wird (siehe checks/clarity.py).
+    url_validator: optional, wird für jedes Weiterleitungsziel der ersten Abfrage aufgerufen. Gibt es False zurück, wird
     nicht weiter gefolgt und der Audit endet wie bei einer nicht ladbaren Seite. Ein öffentlicher Dienst übergibt hier seine
     Prüfung auf öffentliche Adressen, sonst führt eine Weiterleitung auf interne Adressen zu SSRF."""
     skip = [s.lower() for s in (skip or [])]
@@ -93,6 +97,14 @@ def run_audit(
             continue
         notify(name, label)
         results[name] = module.run(url, html, soup, resp_headers)
+
+    # Klarheit auf den ersten Blick, nur mit judge. Jede Ausnahme ergibt "nicht beurteilbar", der Audit läuft weiter.
+    if clarity_judge is not None and "clarity" not in skip:
+        notify("clarity", "Ersten Eindruck prüfen...")
+        try:
+            results["clarity"] = clarity.run(first_view.collect(url, url_validator), clarity_judge)
+        except Exception:
+            results["clarity"] = {"stage": "nicht_beurteilbar", "reason": "failed", "audience": None, "offer": None}
 
     # a11y last (Playwright)
     if "a11y" not in skip:
