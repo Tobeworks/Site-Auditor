@@ -92,6 +92,14 @@ def test_report_discloses_formula_and_plan():
     assert "SEC-01" in md
 
 
+def test_category_for_kis_is_ki_bereitschaft():
+    results = {"ai_visibility": {"findings": [_f("KIS-03", "HOCH")]}, "seo": {"findings": [_f("SEO-02", "MITTEL")]}}
+    score = scoring.build_score(results)
+    assert score["categories"]["KI-Bereitschaft"] == 8.5
+    assert score["categories"]["OnPage-SEO"] == 9.5 and "Content & Sichtbarkeit" not in score["categories"]
+    assert score["first"][0]["id"] == "KIS-03"
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

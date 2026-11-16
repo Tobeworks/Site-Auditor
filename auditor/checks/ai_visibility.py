@@ -235,6 +235,78 @@ def _snippet_restrictions(soup, headers: dict) -> list[str]:
     return found
 
 
+RENDER_MIN_WORDS = 40       # darunter ist die Seite zu kurz für ein belastbares Verhältnis
+RENDER_HIGH_RATIO = 0.20    # weniger als ein Fünftel des sichtbaren Textes steht im HTML
+RENDER_MEDIUM_RATIO = 0.34  # weniger als ein Drittel
+
+
+def _checklist(result: dict) -> list[dict]:
+    """Die fünf Gruppen als Checkliste für den Bericht, immer in dieser Reihenfolge."""
+    ids = {f["id"] for f in result.get("findings", [])}
+    crawlers = result.get("crawlers") or []
+    structure, entity, render = result.get("structure") or {}, result.get("entity") or {}, result.get("render") or {}
+
+    rejected = [c["name"] for c in crawlers if c.get("server") == "blocked"]
+    robots_blocked = [c["name"] for c in crawlers if c.get("robots") == "blocked" and c.get("group") != "training"]
+    if rejected or robots_blocked or "KIS-01" in ids or "KIS-03" in ids:
+        access = ("issue", "Gesperrt: " + ", ".join(rejected + [b for b in robots_blocked if b not in rejected]))
+    elif any(c.get("server") == "ok" for c in crawlers):
+        access = ("ok", "Such- und Nutzer-Bots erreichen deine Startseite.")
+    else:
+        access = ("unknown", "Der Abruf mit Bot-Namen war nicht möglich.")
+
+    if "KIS-04" in ids:
+        render_item = ("issue", f"Nur {render.get('html_words')} von {render.get('rendered_words')} Wörtern stehen im HTML.")
+    elif render.get("status") == "ok":
+        render_item = ("ok", "Der Text steht schon im HTML, ohne JavaScript.")
+    else:
+        render_item = ("unknown", "Nicht geprüft.")
+
+    if not structure:
+        structure_item = ("unknown", "Nicht geprüft.")
+    else:
+        detail = f"{structure.get('h2_count', 0)} Zwischenüberschriften, {structure.get('question_headings', 0)} Fragen, {structure.get('lists', 0)} Listen."
+        structure_item = ("issue" if "KIS-05" in ids else "ok", detail)
+
+    if not entity:
+        entity_item = ("unknown", "Nicht geprüft.")
+    elif "KIS-06" in ids or not entity.get("organization") or not entity.get("logo") or not entity.get("same_as"):
+        missing = [name for name, ok in (("Firmen-Schema", entity.get("organization")), ("Logo", entity.get("logo")), ("sameAs-Profile", entity.get("same_as"))) if not ok]
+        entity_item = ("issue", ("Es fehlt: " + ", ".join(missing) + ".") if missing else "Angaben im Schema sind unvollständig.")
+    else:
+        entity_item = ("ok", f"Firma, Logo und {entity['same_as']} Profile sind im Schema angegeben.")
+
+    restricted = (result.get("snippets") or {}).get("restricted") or []
+    snippets = ("issue", "Gesperrt: " + ", ".join(restricted)) if "KIS-07" in ids else ("ok", "Keine Sperre für Textausschnitte.")
+
+    items = (("access", "KI-Bots kommen auf deine Seite", access), ("render", "Dein Text ist ohne JavaScript lesbar", render_item),
+             ("structure", "Deine Seite ist klar gegliedert", structure_item), ("entity", "Deine Firma ist eindeutig beschrieben", entity_item),
+             ("snippets", "KI-Systeme dürfen Ausschnitte übernehmen", snippets))
+    return [{"key": key, "label": label, "status": status, "detail": detail} for key, label, (status, detail) in items]
+
+
+def apply_render_check(result: dict, html: str, first_view: dict | None) -> None:
+    """Vergleicht den Text im HTML mit dem, was der Browser auf dem ersten Bildschirm zeigt, setzt `render`, hängt bei Bedarf
+    KIS-04 an und baut die Checkliste neu. Tut nichts bei einem Fehler im Modul oder ohne brauchbares first_view. Im Zweifel
+    kein Befund: html_words zählt die ganze Seite, rendered_words nur den ersten Bildschirm, ein Verhältnis unter 1 ist also streng."""
+    if "error" in result or not isinstance(first_view, dict) or first_view.get("status") != "ok":
+        return
+    html_words = _word_count(BeautifulSoup(html or "", "lxml"))
+    rendered_words = len((first_view.get("text") or "").split())
+    result["render"] = {"status": "ok", "html_words": html_words, "rendered_words": rendered_words}
+    result["findings"] = [f for f in result["findings"] if f["id"] != "KIS-04"]
+    if rendered_words >= RENDER_MIN_WORDS:
+        ratio = html_words / rendered_words
+        if ratio < RENDER_MEDIUM_RATIO:
+            result["findings"].append(finding(
+                "KIS-04", "HOCH" if ratio < RENDER_HIGH_RATIO else "MITTEL",
+                f"Der Text deiner Seite steht nur mit JavaScript im Browser, im HTML sind es {html_words} von {rendered_words} Wörtern",
+                "Viele KI-Crawler führen kein JavaScript aus. Sie sehen dann kaum Text von deiner Seite und können sie nicht verstehen oder zitieren.",
+                solution="Liefere den Haupttext schon im HTML aus (Server-Rendering oder statische Seiten), statt ihn erst per JavaScript nachzuladen.",
+            ))
+    result["checklist"] = _checklist(result)
+
+
 def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
     try:
         parsed = urlparse(url)
@@ -311,7 +383,10 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
                 "Fragen als Überschriften und FAQ-Abschnitte lassen sich von KI-Systemen leicht als Antwort übernehmen.",
             ))
 
-        return {"blocked_crawlers": blocked, "llms_txt": has_llms, "crawlers": crawlers, "structure": structure,
-                "entity": entity, "snippets": {"restricted": restricted}, "findings": findings}
+        result = {"blocked_crawlers": blocked, "llms_txt": has_llms, "crawlers": crawlers, "structure": structure,
+                  "entity": entity, "snippets": {"restricted": restricted},
+                  "render": {"status": "unknown", "html_words": None, "rendered_words": None}, "findings": findings}
+        result["checklist"] = _checklist(result)
+        return result
     except Exception as e:
         return {"error": str(e)}

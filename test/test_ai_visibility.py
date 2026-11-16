@@ -392,6 +392,83 @@ def test_findings_and_result_stay_valid_without_html():
     assert result["snippets"] == {"restricted": []}
 
 
+
+# ---- Lesbarkeit ohne JavaScript, Checkliste ----
+
+def _fv(words, status="ok"):
+    return {"status": status, "title": "", "description": "", "h1": "", "text": " ".join(["wort"] * words)}
+
+
+def _base_result():
+    return _analyze(_page("<h1>T</h1><h2>Teil</h2>"))
+
+
+def _html_with(words):
+    return f"<html><body><p>{'wort ' * words}</p><script>var viel = 'a b c d e f g h i j k l m n o p';</script></body></html>"
+
+
+def test_render_check_flags_js_only_pages():
+    for html_words, rendered, severity in ((30, 300, "HOCH"), (90, 300, "MITTEL"), (240, 300, None)):
+        result = _base_result()
+        ai_visibility.apply_render_check(result, _html_with(html_words), _fv(rendered))
+        assert result["render"]["status"] == "ok" and result["render"]["rendered_words"] == rendered
+        assert result["render"]["html_words"] == html_words   # Skripte zählen nicht mit
+        found = [f for f in result["findings"] if f["id"] == "KIS-04"]
+        assert (found[0]["severity"] if found else None) == severity, (html_words, rendered)
+        if found:
+            assert found[0]["solution"] and "JavaScript" in found[0]["finding"]
+
+
+def test_render_check_ignores_short_pages():
+    result = _base_result()
+    ai_visibility.apply_render_check(result, _html_with(2), _fv(25))
+    assert not any(f["id"] == "KIS-04" for f in result["findings"]) and result["render"]["status"] == "ok"
+
+
+def test_render_check_without_usable_first_view_changes_nothing():
+    for fv in (_fv(300, "blocked"), _fv(0, "empty"), _fv(0, "error"), None):
+        result = _base_result()
+        before = list(result["findings"])
+        ai_visibility.apply_render_check(result, _html_with(5), fv)
+        assert result["render"]["status"] == "unknown" and result["findings"] == before, fv
+    failed = {"error": "boom"}
+    ai_visibility.apply_render_check(failed, _html_with(5), _fv(300))
+    assert failed == {"error": "boom"}
+
+
+def _checklist_status(result):
+    assert [c["key"] for c in result["checklist"]] == ["access", "render", "structure", "entity", "snippets"]
+    assert all(c["label"] and c["detail"] and c["status"] in ("ok", "issue", "unknown") for c in result["checklist"])
+    return {c["key"]: c["status"] for c in result["checklist"]}
+
+
+def test_checklist_has_five_entries_in_fixed_order_with_status():
+    complete = {"@context": "https://schema.org", "@graph": [{"@type": "Organization", "name": "M", "url": "https://x.de/", "logo": "l", "sameAs": ["https://a.de"]}]}
+    good = _analyze(_page("<h1>T</h1><h2>Teil</h2>", head=_ld(complete)))
+    status = _checklist_status(good)
+    assert status == {"access": "unknown", "render": "unknown", "structure": "ok", "entity": "ok", "snippets": "ok"}
+    ai_visibility.apply_render_check(good, _html_with(280), _fv(300))
+    assert _checklist_status(good)["render"] == "ok"
+    ai_visibility.apply_render_check(good, _html_with(20), _fv(300))   # baut die Liste neu
+    assert _checklist_status(good)["render"] == "issue"
+    bad = _analyze(_page("<h1>T</h1>", head='<meta name="robots" content="nosnippet">', words=350))
+    assert _checklist_status(bad) == {"access": "unknown", "render": "unknown", "structure": "issue", "entity": "issue", "snippets": "issue"}
+
+
+def test_checklist_access_follows_crawlers_and_robots():
+    server, base, _ = _serve(lambda ua, path: (403, "x", {}) if "OAI-SearchBot" in ua else None)
+    try:
+        assert _checklist_status(_run_live(base))["access"] == "issue"
+    finally:
+        server.shutdown()
+    server, base, _ = _serve()
+    try:
+        assert _checklist_status(_run_live(base))["access"] == "ok"
+    finally:
+        server.shutdown()
+    assert _checklist_status(_run("User-agent: ChatGPT-User\nDisallow: /\n"))["access"] == "issue"   # KIS-01
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

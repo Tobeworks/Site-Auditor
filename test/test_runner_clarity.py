@@ -62,6 +62,49 @@ def test_url_validator_reaches_collect():
     assert calls == [("https://tobeworks.de", validator)]
 
 
+AI_RESULT = {"blocked_crawlers": [], "llms_txt": False, "findings": [], "render": {"status": "unknown", "html_words": None, "rendered_words": None}, "checklist": []}
+
+
+def run_ai(judge=None, skip=None, **kwargs):
+    """Wie run(), aber ai_visibility läuft (ersetzt, kein Netz) und liefert ein eigenes Ergebnis."""
+    calls = []
+
+    def collect(url, url_validator=None, **kw):
+        calls.append(url)
+        return FV
+
+    with patch.object(runner, "_fetch", return_value=(HTML, {}, 42)), patch.object(runner.first_view, "collect", collect), \
+            patch.object(runner.ai_visibility, "run", return_value={**AI_RESULT, "findings": []}):
+        results = runner.run_audit("https://tobeworks.de", skip=[s for s in EVERYTHING_BUT_SEO if s != "ai_visibility"] + (skip or []),
+                                   clarity_judge=judge, **kwargs)
+    return results, calls
+
+
+def test_render_check_alone_collects_once_and_sets_render():
+    results, calls = run_ai(render_check=True)
+    assert len(calls) == 1 and results["ai_visibility"]["render"]["status"] == "ok" and "clarity" not in results
+
+
+def test_render_check_with_judge_collects_only_once():
+    results, calls = run_ai(judge=lambda fv: JUDGE_ANSWER, render_check=True)
+    assert len(calls) == 1 and results["clarity"]["stage"] == "klar" and results["ai_visibility"]["render"]["status"] == "ok"
+
+
+def test_neither_judge_nor_render_check_does_not_collect():
+    results, calls = run_ai()
+    assert calls == [] and results["ai_visibility"]["render"]["status"] == "unknown"
+
+
+def test_skipping_clarity_prevents_both():
+    results, calls = run_ai(judge=lambda fv: JUDGE_ANSWER, skip=["clarity"], render_check=True)
+    assert calls == [] and "clarity" not in results and results["ai_visibility"]["render"]["status"] == "unknown"
+
+
+def test_render_check_without_ai_visibility_does_not_raise_or_collect():
+    results, calls = run_ai(skip=["ai_visibility"], render_check=True)
+    assert calls == [] and "ai_visibility" not in results and "score" in results
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

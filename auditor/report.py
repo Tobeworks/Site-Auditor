@@ -21,7 +21,7 @@ def _status(findings: list, error: bool = False) -> str:
 
 # Module ohne eigene Tabelle: Überschrift plus Findings-Liste (Reihenfolge wie im Runner).
 EXTRA_MODULES = [
-    ("ai_visibility", "KI-Crawler & llms.txt"),
+    ("ai_visibility", "KI-Bereitschaft"),
     ("contact", "Kontaktweg"),
     ("accessibility_static", "Barrierefreiheit (Schnelltest)"),
     ("reviews", "Bewertungen & Testimonials"),

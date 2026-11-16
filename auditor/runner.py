@@ -22,9 +22,12 @@ def run_audit(
     on_progress: OnProgress | None = None,
     url_validator: Callable[[str], bool] | None = None,
     clarity_judge: Callable[[dict], dict | None] | None = None,
+    render_check: bool = False,
 ) -> dict:
     """clarity_judge: optional. Ohne ihn startet kein Browser und es gibt keinen Block `clarity`. Mit ihm liest ein Browser den
     ersten Handy-Bildschirm und der judge beantwortet, für wen das Angebot ist und was verkauft wird (siehe checks/clarity.py).
+    render_check: optional. Liest die Seite einmal im Browser und vergleicht den Text mit dem im HTML (KIS-04). Teilt sich den
+    Browserlauf mit clarity_judge, es wird nur einmal gesammelt. Ohne beides startet kein Browser.
     url_validator: optional, wird für jedes Weiterleitungsziel der ersten Abfrage aufgerufen. Gibt es False zurück, wird
     nicht weiter gefolgt und der Audit endet wie bei einer nicht ladbaren Seite. Ein öffentlicher Dienst übergibt hier seine
     Prüfung auf öffentliche Adressen, sonst führt eine Weiterleitung auf interne Adressen zu SSRF."""
@@ -98,13 +101,26 @@ def run_audit(
         notify(name, label)
         results[name] = module.run(url, html, soup, resp_headers)
 
-    # Klarheit auf den ersten Blick, nur mit judge. Jede Ausnahme ergibt "nicht beurteilbar", der Audit läuft weiter.
-    if clarity_judge is not None and "clarity" not in skip:
-        notify("clarity", "Ersten Eindruck prüfen...")
+    # Erster Bildschirm im Browser, einmal gesammelt: Klarheit (nur mit judge) und Lesbarkeit ohne JavaScript (nur mit render_check
+    # und vorhandenem ai_visibility). Jede Ausnahme ergibt "nicht beurteilbar" beziehungsweise keinen Befund, der Audit läuft weiter.
+    want_clarity = clarity_judge is not None and "clarity" not in skip
+    want_render = render_check and "clarity" not in skip and isinstance(results.get("ai_visibility"), dict)
+    if want_clarity or want_render:
+        notify("clarity", "Ersten Eindruck prüfen..." if want_clarity else "Lesbarkeit ohne JavaScript prüfen...")
         try:
-            results["clarity"] = clarity.run(first_view.collect(url, url_validator), clarity_judge)
+            fv = first_view.collect(url, url_validator)
         except Exception:
-            results["clarity"] = {"stage": "nicht_beurteilbar", "reason": "failed", "audience": None, "offer": None}
+            fv = None
+        if want_render:
+            try:
+                ai_visibility.apply_render_check(results["ai_visibility"], html, fv)
+            except Exception:
+                pass
+        if want_clarity:
+            try:
+                results["clarity"] = clarity.run(fv, clarity_judge)
+            except Exception:
+                results["clarity"] = {"stage": "nicht_beurteilbar", "reason": "failed", "audience": None, "offer": None}
 
     # a11y last (Playwright)
     if "a11y" not in skip:
