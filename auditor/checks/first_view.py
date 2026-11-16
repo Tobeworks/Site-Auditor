@@ -81,18 +81,19 @@ def _collect(url: str, url_validator, timeout_s: float) -> dict:
     from playwright.sync_api import sync_playwright
 
     state = {"blocked": False, "redirect": None}
-    verdicts: dict[str, bool] = {}  # je Host nur einmal prüfen, die Prüfung löst DNS auf
+    verdicts: dict[tuple[str, str], bool] = {}  # je Schema und Host nur einmal prüfen, die Prüfung löst DNS auf
 
     def allowed(request_url: str) -> bool:
         if url_validator is None:
             return True
-        host = urlparse(request_url).netloc
-        if host not in verdicts:
+        parsed = urlparse(request_url)
+        key = (parsed.scheme, parsed.netloc)  # je Schema und Host, ein anderes Schema darf nicht vom Ergebnis eines anderen profitieren
+        if key not in verdicts:
             try:
-                verdicts[host] = bool(url_validator(request_url))
+                verdicts[key] = bool(url_validator(request_url))
             except Exception:
-                verdicts[host] = False
-        return verdicts[host]
+                verdicts[key] = False
+        return verdicts[key]
 
     with sync_playwright() as p:
         browser = p.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])  # /dev/shm ist im Container oft nur 64 MB groß

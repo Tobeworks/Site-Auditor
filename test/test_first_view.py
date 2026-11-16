@@ -163,6 +163,19 @@ def test_allowed_redirect_is_followed():
         server.shutdown()
 
 
+def test_validator_verdict_is_not_shared_between_schemes():
+    """Das gemerkte Ergebnis gilt je Schema und Host, sonst käme ein anderes Schema für denselben Host ungeprüft durch."""
+    seen = []
+    pages = {}
+    server, base, _ = serve(pages)
+    pages["/"] = (200, f"<h1>Websites für Zahnärzte in Mainz</h1><img src='{base.replace('http://', 'https://')}/a.png'>", {})
+    try:
+        first_view.collect(base + "/", url_validator=lambda u: seen.append(u) or True)
+    finally:
+        server.shutdown()
+    assert any(u.startswith("http://127.0.0.1:") for u in seen) and any(u.startswith("https://127.0.0.1:") for u in seen), seen
+
+
 def test_full_browser_pool_returns_error():
     original = first_view._BROWSERS, first_view._WAIT_S
     first_view._BROWSERS = threading.BoundedSemaphore(1)
