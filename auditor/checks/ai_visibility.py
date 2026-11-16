@@ -78,6 +78,15 @@ def _blocked(groups, bot: str) -> bool:
     return False
 
 
+def _get_status(client, url: str) -> tuple[int | None, str | None]:
+    """(Statuscode, Text bei 200). Statuscode None bei einem Verbindungsfehler."""
+    try:
+        r = client.get(url)
+    except httpx.HTTPError:
+        return None, None
+    return r.status_code, (r.text if r.status_code == 200 else None)
+
+
 def _get(client, url: str) -> str | None:
     try:
         r = client.get(url)
@@ -298,12 +307,14 @@ def _checklist(result: dict) -> list[dict]:
             entity_item = ("unknown", "Es fehlt: " + ", ".join(missing) + ". Das steht im Befund zu strukturierten Daten.")
 
     restricted = (result.get("snippets") or {}).get("restricted") or []
-    llms = "llms.txt vorhanden." if result.get("llms_txt") else "Keine llms.txt gefunden, sie ist optional und ein Nutzen ist bisher nicht belegt."
-    snippets = ("issue", "Gesperrt: " + ", ".join(restricted)) if "KIS-07" in ids else ("ok", f"Keine Sperre für Textausschnitte. {llms}")
+    parts = []
+    parts.append("Gesperrt: " + ", ".join(restricted) + "." if "KIS-07" in ids else "Keine Sperre für Textausschnitte.")
+    parts.append("llms.txt vorhanden." if result.get("llms_txt") else "Keine llms.txt gefunden." if "KIS-09" in ids else "llms.txt nicht geprüft.")
+    snippets = ("issue" if {"KIS-07", "KIS-09"} & ids else "ok", " ".join(parts))
 
     items = (("access", "KI-Bots kommen auf deine Seite", access), ("render", "Dein Text ist ohne JavaScript lesbar", render_item),
              ("structure", "Deine Seite ist klar gegliedert", structure_item), ("entity", "Deine Firma ist eindeutig beschrieben", entity_item),
-             ("snippets", "KI-Systeme dürfen Ausschnitte übernehmen", snippets))
+             ("snippets", "KI-Systeme können deine Inhalte übernehmen", snippets))
     return [{"key": key, "label": label, "status": status, "detail": detail} for key, label, (status, detail) in items]
 
 
@@ -337,7 +348,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
         findings = []
         with httpx.Client(timeout=8, follow_redirects=True, headers=UA) as client:
             robots = _get(client, f"{base}/robots.txt")
-            llms = _get(client, f"{base}/llms.txt")
+            llms_status, llms = _get_status(client, f"{base}/llms.txt")
 
         blocked = [bot for bot in AI_CRAWLERS if robots and _blocked(_groups(robots), bot)]
         blocked_search = [bot for bot in blocked if bot in SEARCH_CRAWLERS]
@@ -350,10 +361,21 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
 
         # Ein HTML-Dokument unter /llms.txt ist meist eine Fehlerseite mit Status 200, keine llms.txt.
         has_llms = bool(llms and llms.strip() and not llms.lstrip().lower().startswith(("<!doctype", "<html")))
+        # "fehlt" nur bei einer eindeutigen Antwort: nicht gefunden, oder eine Fehlerseite mit Status 200. Eine Zeitüberschreitung,
+        # 403 oder 5xx sagt nichts darüber, ob die Datei existiert.
+        llms_missing = llms_status in (404, 410) or (llms_status == 200 and not has_llms)
         if has_llms:
             findings.append(finding(
                 "KIS-02", "POSITIV", "llms.txt vorhanden",
                 "Eine kompakte Übersicht für KI-Dienste. Ein Nutzen ist bisher nicht belegt, schaden tut sie nicht.",
+            ))
+
+        if llms_missing:
+            findings.append(finding(
+                "KIS-09", "MITTEL", "Keine llms.txt gefunden",
+                "Eine llms.txt ist eine kurze Übersicht deiner Seite als Text ohne Markup für KI-Agenten. Dafür gibt es noch keinen verbindlichen Standard "
+                "und keinen belegten Einfluss darauf, ob du genannt wirst, aber ein KI-Agent bekommt damit deine wichtigsten Inhalte direkt als reinen Text.",
+                solution="Lege unter /llms.txt eine kurze Markdown-Datei an: dein Name, eine Zeile zu dem, was du anbietest, und Links zu den wichtigsten Seiten.",
             ))
 
         # Zugang: robots.txt je Bot und ein echter Abruf mit dem Bot-Namen (nur Such- und Nutzer-Bots, nur bei bekanntem Status 200)

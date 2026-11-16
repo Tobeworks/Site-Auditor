@@ -68,7 +68,7 @@ def test_several_agents_in_one_group_are_all_blocked():
 def test_no_robots_txt_no_finding():
     result = _run(None)
     assert result["blocked_crawlers"] == []
-    assert result["findings"] == []
+    assert [f["id"] for f in result["findings"]] == ["KIS-09"]   # ohne robots.txt kein KI-Befund, nur die fehlende llms.txt
 
 
 def test_llms_txt_present_is_positive_only():
@@ -385,8 +385,9 @@ def test_question_headings_or_faq_give_positive_kis_08():
 
 
 def test_findings_and_result_stay_valid_without_html():
-    result = ai_visibility.run("https://x.de/", "", BeautifulSoup("", "lxml"), {})
-    assert "error" not in result and result["findings"] == []
+    with patch("httpx.Client", return_value=_client_mock(None, "# llms\n> da\n")):
+        result = ai_visibility.run("https://x.de/", "", BeautifulSoup("", "lxml"), {})
+    assert "error" not in result and [f["id"] for f in result["findings"]] == ["KIS-02"]
     assert result["structure"]["words"] == 0 and result["structure"]["lists"] == 0
     assert result["entity"] == {"organization": False, "logo": False, "same_as": 0, "author": None, "date_modified": None}
     assert result["snippets"] == {"restricted": []}
@@ -446,7 +447,7 @@ def test_checklist_has_five_entries_in_fixed_order_with_status():
     complete = {"@context": "https://schema.org", "@graph": [{"@type": "Organization", "name": "M", "url": "https://x.de/", "logo": "l", "sameAs": ["https://a.de"]}]}
     good = _analyze(_page("<h1>T</h1><h2>Teil</h2>", head=_ld(complete)))
     status = _checklist_status(good)
-    assert status == {"access": "unknown", "render": "unknown", "structure": "ok", "entity": "ok", "snippets": "ok"}
+    assert status == {"access": "unknown", "render": "unknown", "structure": "ok", "entity": "ok", "snippets": "issue"}   # snippets: llms.txt fehlt (404 im Mock)
     ai_visibility.apply_render_check(good, _html_with(280), _fv(300))
     assert _checklist_status(good)["render"] == "ok"
     ai_visibility.apply_render_check(good, _html_with(20), _fv(300))   # baut die Liste neu
@@ -565,12 +566,53 @@ def test_checklist_render_unknown_explains_why_it_was_not_checked():
     assert entry["status"] == "unknown" and "Browser" in entry["detail"]
 
 
-def test_checklist_mentions_llms_txt_without_scoring_it():
-    without = next(c for c in _base_result()["checklist"] if c["key"] == "snippets")
-    assert "llms.txt" in without["detail"] and "nicht belegt" in without["detail"] and without["status"] == "ok"
-    with_file = _run(None, "# Seite\n> Kurzbeschreibung\n")
-    detail = next(c for c in with_file["checklist"] if c["key"] == "snippets")["detail"]
-    assert "llms.txt vorhanden" in detail
+# ---- KIS-09: fehlende llms.txt senkt die Note leicht ----
+
+def _llms_run(status, body=""):
+    client = MagicMock()
+    client.__enter__.return_value = client
+
+    def get(url, **kw):
+        if url.endswith("/llms.txt"):
+            if status is None:
+                raise __import__("httpx").ConnectError("weg")
+            return MagicMock(status_code=status, text=body)
+        return MagicMock(status_code=404, text="")
+    client.get.side_effect = get
+    with patch("httpx.Client", return_value=client):
+        return ai_visibility.run("https://x.de/", "<html></html>", BeautifulSoup("", "lxml"), {})
+
+
+def test_missing_llms_txt_is_a_mild_finding_with_honest_wording():
+    for status, body in ((404, ""), (410, ""), (200, "<!DOCTYPE html><html>Seite nicht gefunden</html>")):
+        f = next(f for f in _llms_run(status, body)["findings"] if f["id"] == "KIS-09")
+        assert f["severity"] == "MITTEL" and f["solution"] and "/llms.txt" in f["solution"]
+        assert "verbindlichen Standard" in f["impact"] and "Text ohne Markup" in f["impact"]
+
+
+def test_present_llms_txt_gives_no_kis_09():
+    ids = [f["id"] for f in _llms_run(200, "# Seite\n> Kurzbeschreibung\n")["findings"]]
+    assert "KIS-09" not in ids and "KIS-02" in ids
+
+
+def test_unclear_llms_txt_answer_is_no_finding():
+    for status in (None, 403, 500, 503, 429):
+        assert not any(f["id"] == "KIS-09" for f in _llms_run(status)["findings"]), status
+
+
+def test_checklist_last_item_is_an_issue_when_llms_txt_is_missing_and_ok_otherwise():
+    missing = next(c for c in _llms_run(404)["checklist"] if c["key"] == "snippets")
+    assert missing["status"] == "issue" and "llms.txt" in missing["detail"]
+    present = next(c for c in _llms_run(200, "# Seite\n> da\n")["checklist"] if c["key"] == "snippets")
+    assert present["status"] == "ok" and "llms.txt vorhanden" in present["detail"]
+    unclear = next(c for c in _llms_run(500)["checklist"] if c["key"] == "snippets")
+    assert unclear["status"] == "ok"   # unklare Antwort: kein Mangel behaupten
+
+
+def test_note_drops_by_half_a_point_without_llms_txt():
+    from auditor import scoring
+    score = scoring.build_score({"ai_visibility": _llms_run(404)})
+    assert score["categories"]["KI-Bereitschaft"] == 9.5
 
 
 if __name__ == "__main__":
