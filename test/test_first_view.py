@@ -14,6 +14,8 @@ from auditor.checks import first_view  # noqa: E402
 ALLOW_ALL = lambda url: True  # noqa: E731
 
 
+
+
 def serve(pages):
     """pages: {pfad: (status, html, header-dict)}. Liefert (server, basis_url, zugriffe)."""
     hits = []
@@ -166,22 +168,14 @@ def test_allowed_redirect_is_followed():
 
 def test_validator_verdict_is_not_shared_between_schemes():
     """Das gemerkte Ergebnis gilt je Schema und Host, sonst käme ein anderes Schema für denselben Host ungeprüft durch."""
-    import tempfile
-    log = tempfile.NamedTemporaryFile(delete=False)
-    log.close()
-
-    def validator(u):
-        with open(log.name, "a") as f:   # collect läuft in einem eigenen Prozess, eine Liste im Test bliebe leer
-            f.write(u + "\n")
-        return True
+    seen = []
     pages = {}
     server, base, _ = serve(pages)
     pages["/"] = (200, f"<h1>Websites für Zahnärzte in Mainz</h1><img src='{base.replace('http://', 'https://')}/a.png'>", {})
     try:
-        first_view.collect(base + "/", url_validator=validator)
+        first_view.collect(base + "/", url_validator=lambda u: seen.append(u) or True)
     finally:
         server.shutdown()
-    seen = open(log.name).read().split()
     assert any(u.startswith("http://127.0.0.1:") for u in seen) and any(u.startswith("https://127.0.0.1:") for u in seen), seen
 
 
@@ -266,6 +260,19 @@ def test_fixed_header_does_not_hide_the_hero():
     )
     result, _ = collect_from(page(html))
     assert result["status"] == "ok" and "Zahnärzte" in result["text"], result
+
+
+def test_validator_runs_in_the_parent_process():
+    """Die Namensauflösung des Validators darf nicht im geforkten Kindprozess laufen (auf macOS unzuverlässig)."""
+    import os
+    pids = []
+
+    def validator(u):
+        pids.append(os.getpid())
+        return True
+    html = "<h1>Websites für Zahnärzte in Mainz und Umgebung</h1><p>eins zwei drei vier fünf sechs</p>"
+    result, _ = collect_from(page(html), url_validator=validator)
+    assert result["status"] == "ok" and pids and set(pids) == {os.getpid()}, (result, pids)
 
 
 def test_full_browser_pool_returns_error():

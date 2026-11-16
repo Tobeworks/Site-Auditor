@@ -6,6 +6,7 @@ und nicht verdeckt ist und nicht zu einem Einwilligungsbanner gehört. Jede Anfr
 """
 import multiprocessing
 import threading
+import time
 from typing import Callable
 from urllib.parse import urljoin, urlparse
 
@@ -98,16 +99,31 @@ def collect(url: str, url_validator: Callable[[str], bool] | None = None, timeou
 def _collect_isolated(url: str, url_validator, timeout_s: float) -> dict:
     """Läuft in einem eigenen Prozess, der nach Ablauf der Frist hart beendet wird. Eine Seite, die ihren Haupt-Thread blockiert
     (Endlosschleife), lässt page.title() und page.evaluate() sonst ewig warten und hält Browser und Platz im Pool fest.
-    Mit dem Prozess endet auch der Playwright-Treiber und damit der Browser."""
+    Mit dem Prozess endet auch der Playwright-Treiber und damit der Browser.
+
+    Der url_validator läuft im Elternprozess: Das Kind schickt jede Adresse über die Verbindung und bekommt ein Ja oder Nein.
+    So wird der Validator nicht übertragen (Closures gehen) und die Namensauflösung findet nicht in einem geforkten Prozess statt,
+    wo sie auf macOS nicht zuverlässig ist."""
     ctx = multiprocessing.get_context("fork")
-    receive, send = ctx.Pipe(duplex=False)
-    proc = ctx.Process(target=_child, args=(send, url, url_validator, timeout_s), daemon=True)
+    mine, theirs = ctx.Pipe(duplex=True)
+    proc = ctx.Process(target=_child, args=(theirs, url, url_validator is not None, timeout_s), daemon=True)
     proc.start()
-    send.close()
+    theirs.close()
+    deadline = time.monotonic() + timeout_s + IDLE_WAIT_MS / 1000 + _GRACE_S
     try:
-        if receive.poll(timeout_s + IDLE_WAIT_MS / 1000 + _GRACE_S):
-            return receive.recv()
-        return _result("error")
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0 or not mine.poll(left):
+                return _result("error")
+            kind, payload = mine.recv()
+            if kind == "result":
+                return payload
+            if kind == "validate":
+                try:
+                    allowed = bool(url_validator(payload))
+                except Exception:
+                    allowed = False
+                mine.send(allowed)
     except (EOFError, OSError):
         return _result("error")
     finally:
@@ -116,15 +132,19 @@ def _collect_isolated(url: str, url_validator, timeout_s: float) -> dict:
         if proc.is_alive():
             proc.kill()
             proc.join()
-        receive.close()
+        mine.close()
 
 
-def _child(conn, url, url_validator, timeout_s) -> None:
+def _child(conn, url, has_validator, timeout_s) -> None:
+    def ask(request_url: str) -> bool:
+        conn.send(("validate", request_url))
+        return bool(conn.recv())
+
     try:
-        result = _collect(url, url_validator, timeout_s)
+        result = _collect(url, ask if has_validator else None, timeout_s)
     except Exception:
         result = _result("error")
-    conn.send(result)
+    conn.send(("result", result))
     conn.close()
 
 
