@@ -262,7 +262,7 @@ def _checklist(result: dict) -> list[dict]:
     if rejected or robots_blocked or "KIS-01" in ids or "KIS-03" in ids:
         access = ("issue", "Gesperrt: " + ", ".join(rejected + [b for b in robots_blocked if b not in rejected]))
     elif any(c.get("server") == "ok" for c in crawlers):
-        access = ("ok", "Such- und Nutzer-Bots erreichen deine Startseite.")
+        access = ("ok", "Such- und Nutzer-Bots erreichen deine Seite.")
     else:
         access = ("unknown", "Der Abruf mit Bot-Namen war nicht möglich.")
 
