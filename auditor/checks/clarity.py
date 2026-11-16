@@ -14,8 +14,13 @@ MIN_QUOTE = 10
 NOT_ASSESSABLE_REASON = {"blocked": "blocked", "empty": "no_text"}
 
 
+_TYPOGRAPHY = str.maketrans({"„": '"', "“": '"', "”": '"', "‚": "'", "‘": "'", "’": "'", "–": "-", "—": "-"})
+
+
 def _norm(text: str) -> str:
-    return " ".join(text.lower().split())
+    """Kleinschreibung, ohne jeden Leerraum und mit glatten Anführungszeichen und Strichen. Der gesammelte Text hat durch
+    Inline-Elemente manchmal ein Leerzeichen vor dem Komma, ein Modell zitiert ohne. Das Zitat muss trotzdem lückenlos im Text stehen."""
+    return "".join(text.lower().translate(_TYPOGRAPHY).split())
 
 
 def _verified(entry, text_norm: str) -> dict | None:

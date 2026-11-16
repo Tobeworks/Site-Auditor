@@ -39,7 +39,7 @@ PROBE_TIMEOUT = 8
 PROBE_BUDGET = 10  # Höchstzahl der Abrufe mit Bot-Namen je Lauf, Weiterleitungen eingerechnet
 PROBE_MAX_REDIRECTS = 2
 PROBE_WORKERS = 3
-BLOCK_STATUS = (401, 403, 429, 503)
+BLOCK_STATUS = (401, 403)  # 429 und 503 sind Drosselung und Ausfall, keine Aussage über Bot-Namen
 CHALLENGE_MARKERS = ("just a moment", "cf-chl", "attention required", "access denied")
 UA = {"User-Agent": "Mozilla/5.0 (compatible; site-auditor/1.0)"}
 
@@ -104,35 +104,40 @@ class _Budget:
             return True
 
 
-def _probe(url: str, bot: str, baseline_ok: bool, budget: _Budget, baseline_head: str = "") -> str:
-    """Ruft die geprüfte Seite mit dem Namen eines Bots ab. 'blocked' nur, wenn die normale Abfrage 200 lieferte und der Server
-    den Bot abweist (401, 403, 429, 503 oder eine Prüfseite), sonst 'ok' bei Erfolg und 'unknown' bei allem anderen.
-    Weiterleitungen nur innerhalb desselben Hosts. Wirft nie. Bekannte Grenze: erkannt werden nur Sperren nach Bot-Namen."""
+def _probe(url: str, bot: str, baseline_ok: bool, budget: _Budget, baseline_head: str = "") -> tuple[str, int]:
+    """Ruft die geprüfte Seite mit dem Namen eines Bots ab. Liefert (Ergebnis, Wörter im HTML dieser Antwort).
+    'blocked' nur, wenn die normale Abfrage 200 lieferte, der Server den Bot abweist (401, 403 oder eine Prüfseite) und ein
+    Kontrollabruf mit normaler Kennung unmittelbar danach noch 200 liefert. Sonst 'ok' bei Erfolg und 'unknown' bei allem anderen.
+    Weiterleitungen nur innerhalb desselben Hosts. Wirft nie. Bekannte Grenzen: erkannt werden nur Sperren nach Bot-Namen, und
+    Schutzsysteme, die den echten Bot an seiner IP-Adresse durchlassen, sperren unseren Abruf trotzdem."""
     if not baseline_ok:
-        return "unknown"
+        return "unknown", 0
+    marked = lambda text: any(m in text[:2000].lower() and m not in baseline_head for m in CHALLENGE_MARKERS)  # noqa: E731
     try:
         current = url
         with httpx.Client(timeout=PROBE_TIMEOUT, follow_redirects=False, headers={"User-Agent": BOT_UA[bot]}, verify=False) as client:
             for _ in range(PROBE_MAX_REDIRECTS + 1):
                 if not budget.take():
-                    return "unknown"
+                    return "unknown", 0
                 r = client.get(current)
                 location = r.headers.get("location")
                 if r.is_redirect and location:
                     current = str(r.url.join(location))
                     if not _same_host(url, current):
-                        return "unknown"
+                        return "unknown", 0
                     continue
-                if r.status_code in BLOCK_STATUS:
-                    return "blocked"
+                rejected = r.status_code in BLOCK_STATUS or (200 <= r.status_code < 300 and marked(r.text))
+                if rejected:
+                    if not budget.take():
+                        return "unknown", 0
+                    control = client.get(current, headers=UA)   # läuft der Server mit normaler Kennung noch, ist es eine Sperre nach Bot-Namen
+                    return ("blocked", 0) if control.status_code == 200 and not marked(control.text) else ("unknown", 0)
                 if 200 <= r.status_code < 300:
-                    head = r.text[:2000].lower()
-                    # eine Marke, die schon die normale Seite trägt, ist keine Prüfseite
-                    return "blocked" if any(m in head and m not in baseline_head for m in CHALLENGE_MARKERS) else "ok"
-                return "unknown"
+                    return "ok", _word_count(BeautifulSoup(r.text, "lxml"))
+                return "unknown", 0
     except Exception:
         pass
-    return "unknown"
+    return "unknown", 0
 
 
 SKIP_TEXT_IN = {"script", "style", "noscript", "template"}
@@ -140,6 +145,7 @@ PAGE_FURNITURE = ("nav", "header", "footer")  # Listen dort sind Menüs, kein In
 ORG_TYPES = {"Organization", "LocalBusiness", "Corporation", "ProfessionalService"}
 ARTICLE_TYPES = {"Article", "BlogPosting", "NewsArticle"}
 SNIPPET_TOKENS = {"nosnippet": "nosnippet", "noai": "noai", "noimageai": "noimageai"}
+TEXT_RESTRICTIONS = {"nosnippet", "max-snippet:0", "noai"}  # noimageai betrifft nur Bilder und steht nur in der Liste
 LONG_PAGE_WORDS = 300
 
 
@@ -150,7 +156,11 @@ def _word_count(soup) -> int:
 
 def _types(node) -> set:
     t = node.get("@type")
-    return set(t) if isinstance(t, list) else {t} if isinstance(t, str) else set()
+    return {x for x in (t if isinstance(t, list) else [t]) if isinstance(x, str)}
+
+
+def _is_org(types: set) -> bool:
+    return bool(types & ORG_TYPES) or any(t.endswith("Business") for t in types)
 
 
 def _json_ld_nodes(soup) -> list[tuple[dict, bool]]:
@@ -194,13 +204,14 @@ def _structure(soup, nodes) -> dict:
 
 
 def _entity(nodes) -> dict:
-    orgs = [n for n, _ in nodes if _types(n) & ORG_TYPES or any(t.endswith("Business") for t in _types(n))]
+    orgs = [n for n, _ in nodes if _is_org(_types(n))]
+    persons = [n for n, _ in nodes if "Person" in _types(n)]  # Selbstständige beschreiben sich oft als Person
     articles = [n for n, _ in nodes if _types(n) & ARTICLE_TYPES]
     same_as = lambda n: len(n["sameAs"]) if isinstance(n.get("sameAs"), list) else 1 if n.get("sameAs") else 0  # noqa: E731
     return {
-        "organization": bool(orgs),
-        "logo": any(n.get("logo") for n in orgs),
-        "same_as": max((same_as(n) for n in orgs), default=0),
+        "organization": bool(orgs or persons),
+        "logo": any(n.get("logo") for n in orgs) or any(n.get("image") for n in persons),
+        "same_as": max((same_as(n) for n in orgs + persons), default=0),
         "author": all(n.get("author") for n in articles) if articles else None,
         "date_modified": all(n.get("dateModified") for n in articles) if articles else None,
     }
@@ -212,7 +223,7 @@ def _entity_gaps(nodes) -> list[str]:
     gaps = []
     for node, top in nodes:
         types = _types(node)
-        if (types & ORG_TYPES or any(t.endswith("Business") for t in types)) and not (top and types == {"Organization"}):
+        if _is_org(types) and not (top and types == {"Organization"}):
             gaps += [g for g, missing in (("logo", not node.get("logo")), ("sameAs", not node.get("sameAs"))) if missing]
         if types & ARTICLE_TYPES:
             gaps += [g for g, missing in (("dateModified", not node.get("dateModified")),
@@ -270,11 +281,15 @@ def _checklist(result: dict) -> list[dict]:
 
     if not entity:
         entity_item = ("unknown", "Nicht geprüft.")
-    elif "KIS-06" in ids or not entity.get("organization") or not entity.get("logo") or not entity.get("same_as"):
-        missing = [name for name, ok in (("Firmen-Schema", entity.get("organization")), ("Logo", entity.get("logo")), ("sameAs-Profile", entity.get("same_as"))) if not ok]
-        entity_item = ("issue", ("Es fehlt: " + ", ".join(missing) + ".") if missing else "Angaben im Schema sind unvollständig.")
     else:
-        entity_item = ("ok", f"Firma, Logo und {entity['same_as']} Profile sind im Schema angegeben.")
+        missing = [name for name, ok in (("Firmen-Schema", entity.get("organization")), ("Logo", entity.get("logo")), ("sameAs-Profile", entity.get("same_as"))) if not ok]
+        if "KIS-06" in ids:
+            entity_item = ("issue", "Das Schema ist unvollständig" + (": " + ", ".join(missing) if missing else "") + ".")
+        elif not missing:
+            entity_item = ("ok", f"Firma, Logo und {entity['same_as']} Profile sind im Schema angegeben.")
+        else:
+            # kein eigener Befund (das meldet der Befund zu strukturierten Daten), die Liste behauptet deshalb keinen
+            entity_item = ("unknown", "Es fehlt: " + ", ".join(missing) + ". Das steht im Befund zu strukturierten Daten.")
 
     restricted = (result.get("snippets") or {}).get("restricted") or []
     snippets = ("issue", "Gesperrt: " + ", ".join(restricted)) if "KIS-07" in ids else ("ok", "Keine Sperre für Textausschnitte.")
@@ -291,7 +306,8 @@ def apply_render_check(result: dict, html: str, first_view: dict | None) -> None
     kein Befund: html_words zählt die ganze Seite, rendered_words nur den ersten Bildschirm, ein Verhältnis unter 1 ist also streng."""
     if "error" in result or not isinstance(first_view, dict) or first_view.get("status") != "ok":
         return
-    html_words = _word_count(BeautifulSoup(html or "", "lxml"))
+    # Seiten, die Bots vorrendern, liefern ihnen mehr HTML als unserer normalen Abfrage: das Maximum zählt
+    html_words = max(_word_count(BeautifulSoup(html or "", "lxml")), result.get("bot_html_words") or 0)
     rendered_words = len((first_view.get("text") or "").split())
     result["render"] = {"status": "ok", "html_words": html_words, "rendered_words": rendered_words}
     result["findings"] = [f for f in result["findings"] if f["id"] != "KIS-04"]
@@ -338,19 +354,23 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
         robots_state = lambda bot: "unknown" if robots is None else ("blocked" if _blocked(parsed_robots, bot) else "allowed")  # noqa: E731
         baseline_ok = headers.get("_status_code") == 200
         targets = [bot for bot in SEARCH_CRAWLERS if baseline_ok and robots_state(bot) != "blocked"]
-        servers = {}
+        servers, bot_words = {}, 0
         if targets:
             budget, baseline_head = _Budget(PROBE_BUDGET), (html or "")[:2000].lower()
             with concurrent.futures.ThreadPoolExecutor(max_workers=PROBE_WORKERS) as ex:
-                servers = dict(zip(targets, ex.map(lambda bot: _probe(url, bot, baseline_ok, budget, baseline_head), targets)))
+                probed = dict(zip(targets, ex.map(lambda bot: _probe(url, bot, baseline_ok, budget, baseline_head), targets)))
+            servers = {bot: verdict for bot, (verdict, _) in probed.items()}
+            bot_words = max((words for _, words in probed.values()), default=0)
         crawlers = [{"name": bot, "group": GROUP_OF[bot], "robots": robots_state(bot), "server": servers.get(bot, "unknown")} for bot in AI_CRAWLERS]
 
         rejected = [c["name"] for c in crawlers if c["server"] == "blocked"]
         if rejected:
             names = ", ".join(rejected)
             findings.append(finding(
-                "KIS-03", "HOCH", f"Dein Server weist diese KI-Bots ab, obwohl die robots.txt sie erlaubt: {names}",
-                "Diese KI-Systeme bekommen deine Seite nicht zu sehen. Sie können sie nicht lesen und nicht zitieren, auch wenn du es willst.",
+                "KIS-03", "HOCH" if len(rejected) >= 2 else "MITTEL",
+                f"Dein Server weist Abrufe ab, die sich als diese KI-Bots ausgeben, obwohl die robots.txt sie erlaubt: {names}",
+                "Diese KI-Systeme bekommen deine Seite womöglich nicht zu sehen und können sie dann nicht lesen und nicht zitieren. "
+                "Manche Schutzsysteme lassen die echten Bots von ihren festen Adressen trotzdem durch, dann ist alles in Ordnung.",
                 solution=f"Prüfe Firewall, Bot-Schutz (zum Beispiel bei Cloudflare) und Sicherheits-Plugins und erlaube die Bots {names}, wenn du in KI-Antworten vorkommen willst.",
             ))
 
@@ -371,9 +391,10 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
                 "KI-Systeme ordnen Aussagen nur dann sicher dir zu, wenn Firma, Logo und Profile (sameAs) eindeutig angegeben sind.",
                 solution=f"Ergänze im Schema-Block deiner Firma beziehungsweise des Artikels: {', '.join(gaps)}.",
             ))
-        if restricted:
+        text_restricted = [r for r in restricted if r in TEXT_RESTRICTIONS]
+        if text_restricted:
             findings.append(finding(
-                "KIS-07", "MITTEL", f"Deine Seite verbietet das Übernehmen von Textausschnitten ({', '.join(restricted)})",
+                "KIS-07", "MITTEL", f"Deine Seite verbietet das Übernehmen von Textausschnitten ({', '.join(text_restricted)})",
                 "Suchmaschinen und KI-Systeme dürfen dann keine Ausschnitte deiner Seite anzeigen oder in Antworten übernehmen.",
                 solution="Entferne die Sperre aus dem Robots-Meta-Tag oder dem X-Robots-Tag-Header, wenn Ausschnitte erwünscht sind. Wenn die Sperre Absicht ist, ist alles in Ordnung.",
             ))
@@ -385,7 +406,8 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
 
         result = {"blocked_crawlers": blocked, "llms_txt": has_llms, "crawlers": crawlers, "structure": structure,
                   "entity": entity, "snippets": {"restricted": restricted},
-                  "render": {"status": "unknown", "html_words": None, "rendered_words": None}, "findings": findings}
+                  "render": {"status": "unknown", "html_words": None, "rendered_words": None},
+                  "bot_html_words": bot_words or None, "findings": findings}
         result["checklist"] = _checklist(result)
         return result
     except Exception as e:

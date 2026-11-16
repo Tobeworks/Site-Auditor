@@ -119,6 +119,13 @@ def test_texts_have_no_dashes():
                 assert "—" not in (f[field] or "") and "–" not in (f[field] or ""), f
 
 
+def test_quote_matching_ignores_spacing_around_punctuation_and_typographic_marks():
+    fv = dict(FV, text="Wir bauen Websites , die verkaufen. Für „Zahnärzte“ – seit 2010.")
+    for quote in ("Websites, die verkaufen", 'Für "Zahnärzte" - seit 2010', "websites,dieverkaufen."):
+        result = clarity.run(fv, judge_of({"answer": "Für Zahnärzte.", "quote": quote}, None))
+        assert result["audience"] is not None, quote
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

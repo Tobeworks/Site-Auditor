@@ -2,6 +2,7 @@
 import socket
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -165,15 +166,106 @@ def test_allowed_redirect_is_followed():
 
 def test_validator_verdict_is_not_shared_between_schemes():
     """Das gemerkte Ergebnis gilt je Schema und Host, sonst käme ein anderes Schema für denselben Host ungeprüft durch."""
-    seen = []
+    import tempfile
+    log = tempfile.NamedTemporaryFile(delete=False)
+    log.close()
+
+    def validator(u):
+        with open(log.name, "a") as f:   # collect läuft in einem eigenen Prozess, eine Liste im Test bliebe leer
+            f.write(u + "\n")
+        return True
     pages = {}
     server, base, _ = serve(pages)
     pages["/"] = (200, f"<h1>Websites für Zahnärzte in Mainz</h1><img src='{base.replace('http://', 'https://')}/a.png'>", {})
     try:
-        first_view.collect(base + "/", url_validator=lambda u: seen.append(u) or True)
+        first_view.collect(base + "/", url_validator=validator)
     finally:
         server.shutdown()
+    seen = open(log.name).read().split()
     assert any(u.startswith("http://127.0.0.1:") for u in seen) and any(u.startswith("https://127.0.0.1:") for u in seen), seen
+
+
+def test_popups_service_workers_and_websockets_cannot_reach_internal_hosts():
+    internal, base_b, hits_b = serve({"/": (200, "intern", {}), "/popup": (200, "x", {}), "/sw": (200, "x", {}), "/ws": (200, "x", {}), "/fetch": (200, "x", {})})
+    pages = {}
+    server, base_a, _ = serve(pages)
+    base_a = base_a.replace("127.0.0.1", "localhost")   # anderer Host als der interne Server, localhost zählt als sicherer Kontext
+    pages["/"] = (200, f"""<h1>Websites für Zahnärzte in Mainz und Umgebung</h1><p>eins zwei drei vier fünf sechs</p>
+<script>
+try {{ new WebSocket('ws://{base_b.split('//')[1]}/ws'); }} catch (e) {{}}
+try {{ window.open('{base_b}/popup'); }} catch (e) {{}}
+fetch('{base_b}/fetch').catch(() => {{}});
+if (navigator.serviceWorker) navigator.serviceWorker.register('/sw.js').catch(() => {{}});
+</script>""", {})
+    pages["/sw.js"] = (200, f"self.addEventListener('install', e => e.waitUntil(fetch('{base_b}/sw', {{mode: 'no-cors'}}).catch(() => {{}})));", {"Content-Type": "application/javascript"})
+    port_b = internal.server_address[1]
+    try:
+        result = first_view.collect(base_a + "/", url_validator=lambda u: f":{port_b}" not in u)
+        time.sleep(1)
+    finally:
+        server.shutdown()
+        internal.shutdown()
+    assert result["status"] == "ok", result
+    assert hits_b == [], hits_b
+
+
+def test_page_that_freezes_the_browser_returns_error_and_leaves_no_browser():
+    import subprocess
+    count = lambda: len(subprocess.run(["pgrep", "-f", "ms-playwright"], capture_output=True, text=True).stdout.split())  # noqa: E731
+    before = count()
+    original = first_view._GRACE_S
+    first_view._GRACE_S = 2
+    html = "<h1>Websites für Zahnärzte in Mainz</h1><p>eins zwei drei vier fünf</p><script>setTimeout(function(){while(true){}}, 200)</script>"
+    started = time.time()
+    try:
+        result, _ = collect_from(page(html), timeout_s=3)
+    finally:
+        first_view._GRACE_S = original
+    assert result["status"] == "error", result
+    assert time.time() - started < 20
+    for _ in range(50):   # der Browser wird mit dem Prozess beendet, das dauert einen Moment
+        if count() <= before:
+            break
+        time.sleep(0.2)
+    assert count() <= before, (before, count())
+
+
+def test_inline_elements_keep_order_and_words():
+    html = "<h1>Wir bauen <span style='font-size:48px'>Websites</span>, die verkaufen.</h1><p>und noch mehr Text für Zahnärzte</p>"
+    result, _ = collect_from(page(html))
+    squeezed = "".join(result["text"].lower().split())
+    assert "wirbauenwebsites,dieverkaufen." in squeezed, result["text"]
+    assert result["text"].index("Wir bauen") < result["text"].index("Websites") < result["text"].index("verkaufen")
+
+
+def test_consent_overlay_with_unknown_class_names_is_not_taken_for_the_offer():
+    html = (
+        "<h1>Websites für Zahnärzte in Mainz und Umgebung</h1><p>Wir bauen schnelle Praxis-Websites mit Terminbuchung für dich</p>"
+        "<div class='x7q9' style='position:fixed;inset:0;background:#fff;z-index:9999'>Wir verwenden Cookies und ähnliche Technologien, "
+        "um die Seite zu verbessern. Alle akzeptieren oder ablehnen.</div>"
+    )
+    result, _ = collect_from(page(html))
+    assert "Cookies" not in result["text"]
+    assert result["status"] == "empty", result
+
+
+def test_unrecognised_full_screen_overlay_is_empty_not_ok():
+    html = (
+        "<h1>Websites für Zahnärzte in Mainz und Umgebung</h1><p>Wir bauen schnelle Praxis-Websites mit Terminbuchung für dich und "
+        "betreuen sie danach jahrelang zum Festpreis ohne versteckte Kosten</p>"
+        "<div class='y1' style='position:fixed;inset:0;background:#fff;z-index:9999'>Bitte wähle jetzt deine Sprache aus, bevor du weiterliest.</div>"
+    )
+    result, _ = collect_from(page(html))
+    assert result["status"] == "empty", result
+
+
+def test_fixed_header_does_not_hide_the_hero():
+    html = (
+        "<div style='position:fixed;top:0;left:0;right:0;height:50px;background:#fff'>Startseite Leistungen Kontakt</div>"
+        "<h1 style='margin-top:80px'>Websites für Zahnärzte in Mainz und Umgebung</h1><p>Wir bauen schnelle Praxis-Websites</p>"
+    )
+    result, _ = collect_from(page(html))
+    assert result["status"] == "ok" and "Zahnärzte" in result["text"], result
 
 
 def test_full_browser_pool_returns_error():

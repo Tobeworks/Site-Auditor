@@ -175,7 +175,7 @@ def test_server_rejecting_a_search_bot_is_a_finding():
     assert _entry(result, "OAI-SearchBot")["server"] == "blocked"
     assert all(_entry(result, bot)["server"] == "ok" for bot in PROBED if bot != "OAI-SearchBot")
     f = next(f for f in result["findings"] if f["id"] == "KIS-03")
-    assert f["severity"] == "HOCH" and f["solution"] and "OAI-SearchBot" in f["finding"] + f["solution"]
+    assert f["severity"] == "MITTEL" and f["solution"] and "OAI-SearchBot" in f["finding"] + f["solution"]   # ein einzelner Bot kann ein Zufall der Abwehr sein
 
 
 def test_challenge_page_counts_as_blocked():
@@ -366,7 +366,7 @@ def test_snippet_restrictions_are_found_in_meta_and_header():
     result = _analyze(html, {"X-Robots-Tag": "noai, noimageai"})
     assert set(result["snippets"]["restricted"]) == {"nosnippet", "max-snippet:0", "noai", "noimageai"}
     f = next(f for f in result["findings"] if f["id"] == "KIS-07")
-    assert f["severity"] == "MITTEL" and "nosnippet" in f["finding"]
+    assert f["severity"] == "MITTEL" and "nosnippet" in f["finding"] and "noimageai" not in f["finding"]
 
 
 def test_page_without_restrictions_has_no_kis_07():
@@ -452,7 +452,7 @@ def test_checklist_has_five_entries_in_fixed_order_with_status():
     ai_visibility.apply_render_check(good, _html_with(20), _fv(300))   # baut die Liste neu
     assert _checklist_status(good)["render"] == "issue"
     bad = _analyze(_page("<h1>T</h1>", head='<meta name="robots" content="nosnippet">', words=350))
-    assert _checklist_status(bad) == {"access": "unknown", "render": "unknown", "structure": "issue", "entity": "issue", "snippets": "issue"}
+    assert _checklist_status(bad) == {"access": "unknown", "render": "unknown", "structure": "issue", "entity": "unknown", "snippets": "issue"}
 
 
 def test_checklist_access_follows_crawlers_and_robots():
@@ -467,6 +467,83 @@ def test_checklist_access_follows_crawlers_and_robots():
     finally:
         server.shutdown()
     assert _checklist_status(_run("User-agent: ChatGPT-User\nDisallow: /\n"))["access"] == "issue"   # KIS-01
+
+
+# ---- Nachbesserungen aus dem Review ----
+
+def test_rate_limit_and_outage_statuses_are_not_a_bot_block():
+    for status in (429, 503, 500):
+        server, base, _ = _serve(lambda ua, path, status=status: (status, "x", {}) if "OAI-SearchBot" in ua else None)
+        try:
+            result = _run_live(base)
+        finally:
+            server.shutdown()
+        assert _entry(result, "OAI-SearchBot")["server"] == "unknown", status
+        assert not any(f["id"] == "KIS-03" for f in result["findings"]), status
+
+
+def test_block_needs_a_normal_request_to_still_work():
+    # Der Server lehnt Bots ab und gleichzeitig jede andere Anfrage nach der ersten (Ausfall, Drosselung): das ist keine Bot-Sperre.
+    def rule(ua, path):
+        if "site-auditor" in ua or any(bot in ua for bot in PROBED):
+            return 403, "x", {}
+        return None
+    server, base, _ = _serve(rule)
+    try:
+        result = _run_live(base)
+    finally:
+        server.shutdown()
+    assert all(c["server"] == "unknown" for c in result["crawlers"]) and not any(f["id"] == "KIS-03" for f in result["findings"])
+
+
+def test_kis_03_severity_depends_on_how_many_bots_are_blocked():
+    server, base, _ = _serve(lambda ua, path: (403, "x", {}) if "OAI-SearchBot" in ua or "ChatGPT-User" in ua else None)
+    try:
+        result = _run_live(base)
+    finally:
+        server.shutdown()
+    f = next(f for f in result["findings"] if f["id"] == "KIS-03")
+    assert f["severity"] == "HOCH" and "OAI-SearchBot" in f["finding"] and "ChatGPT-User" in f["finding"]
+    assert "festen Adressen" in f["impact"] + f["solution"]   # echte Bots können trotzdem durchkommen
+
+
+def test_prerendered_page_for_bots_is_not_a_js_only_page():
+    shell = "<html><body><div id='app'></div></body></html>"
+    rich = f"<html><body><h1>Titel</h1><p>{'wort ' * 280}</p></body></html>"
+    server, base, _ = _serve(lambda ua, path: (200, rich, {}) if any(bot in ua for bot in PROBED) else (200, shell, {}))
+    try:
+        result = _run_live(base, html=shell)
+    finally:
+        server.shutdown()
+    ai_visibility.apply_render_check(result, shell, _fv(300))
+    assert result["render"]["html_words"] >= 280 and not any(f["id"] == "KIS-04" for f in result["findings"])
+
+
+def test_noimageai_alone_is_listed_but_gives_no_finding():
+    result = _analyze(_page("<h1>T</h1>"), {"X-Robots-Tag": "noimageai"})
+    assert result["snippets"]["restricted"] == ["noimageai"] and "KIS-07" not in _ids(result)
+
+
+def test_checklist_entity_does_not_claim_a_finding_that_does_not_exist():
+    top = _analyze(_page("<h1>T</h1><h2>U</h2>", head=_ld({"@type": "Organization", "name": "M", "url": "https://x.de/"})))
+    entry = next(c for c in top["checklist"] if c["key"] == "entity")
+    assert entry["status"] == "unknown" and "Logo" in entry["detail"] and "KIS-06" not in _ids(top)
+    graph = {"@graph": [{"@type": "Organization", "name": "M", "url": "https://x.de/"}]}
+    assert next(c for c in _analyze(_page("<h1>T</h1>", head=_ld(graph)))["checklist"] if c["key"] == "entity")["status"] == "issue"
+
+
+def test_person_schema_counts_as_entity_without_a_firm_finding():
+    person = {"@type": "Person", "name": "Tobias", "image": "https://x.de/me.jpg", "sameAs": ["https://www.linkedin.com/in/x"]}
+    result = _analyze(_page("<h1>T</h1>", head=_ld(person)))
+    assert result["entity"]["organization"] is True and "KIS-06" not in _ids(result)
+    assert next(c for c in result["checklist"] if c["key"] == "entity")["status"] == "ok"
+
+
+def test_non_string_schema_types_do_not_break_the_module():
+    weird = {"@type": [None, 5, "Organization"], "name": "x"}
+    for data in (weird, {"@graph": [weird, {"@type": 7}]}, [None, {"@type": None}]):
+        result = _analyze(_page("<h1>T</h1>", head=_ld(data)))
+        assert "error" not in result and "crawlers" in result, data
 
 
 if __name__ == "__main__":
