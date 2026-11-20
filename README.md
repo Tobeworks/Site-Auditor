@@ -1,6 +1,6 @@
 # Site Auditor
 
-A comprehensive website audit tool — usable as a **CLI** and as a **Python library**. Runs 20 check modules covering security, SEO, performance, accessibility, DNS, legal compliance, HTML markup validity, and more, then generates a structured Markdown, HTML, or JSON report.
+A comprehensive website audit tool — usable as a **CLI** and as a **Python library**. Runs 21 check modules covering security, SEO, performance, accessibility, DNS, legal compliance, HTML markup validity, and more, then generates a structured Markdown, HTML, or JSON report.
 
 Built primarily for WordPress sites, but works on any URL.
 
@@ -28,6 +28,7 @@ Built primarily for WordPress sites, but works on any URL.
 | **AI Visibility** | robots.txt rules for AI crawlers (GPTBot, ClaudeBot, ...), llms.txt |
 | **Contact** | Phone (tap-to-call), e-mail, contact form or link on the page |
 | **Accessibility (static)** | Page language, alt texts, form labels, accessibility statement link (no browser needed) |
+| **Mobile UX** | Viewport meta, horizontal scrolling at 390 px, a way to act in the first screen (call, mail, form, button), tap targets under 24 px (WCAG 2.5.8) |
 | **Reviews** | Review markup, review widgets, testimonials; optional Google Places match (rating, count, phone/postcode comparison) |
 | **Google Result** | Optional: how Google shows the domain for a search of its name (title, description, sitelinks) via DataForSEO |
 | **Score** | Category scores (0-10), overall score, top 3 measures, effort ranges (estimates) in `results["score"]` |
@@ -234,6 +235,7 @@ CLI flags always override config file values.
 - Each open finding deducts points: **KRITISCH 3**, **HOCH 1.5**, **MITTEL 0.5**. Positive findings deduct nothing. A category never drops below 0.
 - The overall score is the **mean of the checked categories**. Categories without a module that ran do not count.
 - If a module of a category was skipped on purpose (`--skip` / `skip=[...]`), the category is capped at **9** and reported as `partial`, because an unchecked part cannot be assumed fine. `wordpress_deep` is exempt (it only runs on WordPress sites).
+- Counted defects scale with their share: missing alt texts or form labels on at least half of the elements (and three or more) count as HOCH instead of MITTEL, three or more serious axe rules count as KRITISCH.
 - Effort ranges (`effort_days`) are rough estimates per severity, not quotes.
 
 Because skipped modules cap a category and unchecked categories are left out, a fast run with many `--skip` values gives a less complete picture, not a better grade.
