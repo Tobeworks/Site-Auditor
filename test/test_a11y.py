@@ -53,6 +53,24 @@ def test_missing_axe_results_without_own_browser_is_an_error_not_an_unprotected_
     assert "error" in result
 
 
+def _img_count(html):
+    with patch.object(a11y, "_run_axe", return_value={"violations": [], "incomplete": []}):
+        result = a11y.run("https://x.de", html, BeautifulSoup(html, "lxml"), {})
+    return result["manual_checks"]["images_without_alt"]
+
+
+def test_empty_alt_in_a_link_with_text_is_a_decorative_image_not_a_finding():
+    assert _img_count('<html lang="de"><body><a href="/x"><img src="a.jpg" alt=""><h3>Titel des Artikels</h3></a></body></html>') == 0
+
+
+def test_empty_alt_as_only_content_of_a_link_is_a_finding():
+    assert _img_count('<html lang="de"><body><a href="/x"><img src="a.jpg" alt=""></a></body></html>') == 1
+
+
+def test_role_presentation_without_alt_is_decorative():
+    assert _img_count('<html lang="de"><body><img src="a.jpg" role="presentation"></body></html>') == 0
+
+
 if __name__ == "__main__":
     test_images_without_alt_is_mittel()
     test_missing_lang_attribute_is_mittel()

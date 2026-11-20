@@ -50,9 +50,16 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict, axe_results: di
         images_without_alt = 0
         for img in soup.find_all("img"):
             alt = img.get("alt")
-            role = img.get("role", "")
-            if alt is None or (alt == "" and role != "presentation"):
+            if img.get("role", "") in ("presentation", "none"):
+                continue
+            if alt is None:
                 images_without_alt += 1
+            elif not alt.strip():
+                # Leeres alt kennzeichnet ein Zierbild und ist richtig. Ein Fehler ist es nur, wenn das Bild der einzige Inhalt eines
+                # Links oder Buttons ist, der sonst keinen Namen hat.
+                holder = img.find_parent(["a", "button"])
+                if holder and not holder.get_text(strip=True) and not any(holder.get(a) for a in ("aria-label", "aria-labelledby", "title")):
+                    images_without_alt += 1
 
         unlabeled_inputs = 0
         for inp in soup.find_all(["input", "select", "textarea"]):

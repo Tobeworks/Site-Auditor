@@ -84,6 +84,15 @@ def test_validator_blocks_asset_requests_and_redirects_are_not_followed():
     assert calls[0][1]["follow_redirects"] is False and len(info) == 1
 
 
+def test_module_scripts_and_header_images_are_not_render_blocking_or_missing_lazy():
+    html = ('<html><head><script type="module" src="/a.js"></script><script src="/b.js"></script></head><body>'
+            '<header><img src="/l.svg"><img src="/l2.svg"></header><img src="/hero.webp" loading="lazy"></body></html>')
+    with patch("shutil.which", return_value=None), patch("httpx.Client") as mock_client:
+        mock_client.return_value.__enter__.return_value.head.return_value = MagicMock(status_code=404, headers={})
+        result = performance.run("https://x.de", html, BeautifulSoup(html, "lxml"), _headers())
+    assert result["render_blocking_scripts"] == 1 and result["images_missing_lazy"] == 0
+
+
 if __name__ == "__main__":
     test_no_compression_is_mittel()
     test_http1_is_mittel_http2_is_positiv()

@@ -70,7 +70,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict, url_validator=N
         render_blocking_styles = 0
         if head:
             for tag in head.find_all("script", src=True):
-                if not tag.get("defer") and not tag.get("async"):
+                if not tag.get("defer") and not tag.get("async") and tag.get("type") != "module":  # Modul-Skripte laufen wie defer
                     render_blocking_scripts += 1
             for tag in head.find_all("link", rel="stylesheet"):
                 if not tag.get("media"):
@@ -80,7 +80,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict, url_validator=N
         # Image optimization
         images = soup.find_all("img")
         images_missing_dimensions = sum(1 for img in images if not img.get("width") or not img.get("height"))
-        images_missing_lazy = sum(1 for i, img in enumerate(images) if i > 0 and img.get("loading") != "lazy")
+        images_missing_lazy = sum(1 for i, img in enumerate(images) if i > 0 and img.get("loading") != "lazy" and not img.find_parent(["header", "nav"]))  # Logos in Kopf und Navigation stehen im ersten Bildschirm
         image_srcs = [(img.get("src", "") or "") for img in images]
         modern_count = sum(1 for s in image_srcs if s.lower().endswith(MODERN_IMAGE_EXTS))
         total_images = len(image_srcs)
