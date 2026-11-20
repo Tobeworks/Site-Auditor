@@ -1,6 +1,6 @@
 # Site Auditor
 
-A comprehensive website audit tool — usable as a **CLI** and as a **Python library**. Runs 15 checks covering security, SEO, performance, accessibility, DNS, legal compliance, HTML markup validity, and more, then generates a structured Markdown, HTML, or JSON report.
+A comprehensive website audit tool — usable as a **CLI** and as a **Python library**. Runs 20 check modules covering security, SEO, performance, accessibility, DNS, legal compliance, HTML markup validity, and more, then generates a structured Markdown, HTML, or JSON report.
 
 Built primarily for WordPress sites, but works on any URL.
 
@@ -45,8 +45,8 @@ Built primarily for WordPress sites, but works on any URL.
 ## Installation
 
 ```bash
-git clone https://github.com/yourname/site-auditor.git
-cd site-auditor
+git clone https://github.com/Tobeworks/Site-Auditor.git
+cd Site-Auditor
 
 uv sync --extra cli          # core + CLI (rich)
 uv run playwright install chromium   # required for accessibility checks
@@ -105,10 +105,11 @@ site-auditor https://tobeworks.de
 
 ## Library Usage
 
-Install just the core (no `rich`, no `anthropic` — those are optional CLI/AI extras):
+Install just the core (no `rich`, no `anthropic` — those are optional CLI/AI extras). The package is **not on PyPI** (the `site-auditor` name there belongs to an unrelated project), install it from GitHub and pin a tag:
 
 ```bash
-uv add site-auditor          # or: pip install site-auditor
+uv add "site-auditor @ git+https://github.com/Tobeworks/Site-Auditor.git@v1.6.1"
+# or: pip install "site-auditor @ git+https://github.com/Tobeworks/Site-Auditor.git@v1.6.1"
 ```
 
 `run_audit()` is a **synchronous, blocking** function (it uses a sync `httpx` client and a sync Playwright wrapper internally). It never prints to the console — pass `on_progress` only if you want progress events.
@@ -222,6 +223,20 @@ anthropic_api_key: "your_key"
 ```
 
 CLI flags always override config file values.
+
+---
+
+## Scoring
+
+`results["score"]` holds the grades. The calculation is deterministic and documented here, so a grade can be traced back to findings.
+
+- Every category starts at **10 points**.
+- Each open finding deducts points: **KRITISCH 3**, **HOCH 1.5**, **MITTEL 0.5**. Positive findings deduct nothing. A category never drops below 0.
+- The overall score is the **mean of the checked categories**. Categories without a module that ran do not count.
+- If a module of a category was skipped on purpose (`--skip` / `skip=[...]`), the category is capped at **9** and reported as `partial`, because an unchecked part cannot be assumed fine. `wordpress_deep` is exempt (it only runs on WordPress sites).
+- Effort ranges (`effort_days`) are rough estimates per severity, not quotes.
+
+Because skipped modules cap a category and unchecked categories are left out, a fast run with many `--skip` values gives a less complete picture, not a better grade.
 
 ---
 
