@@ -54,6 +54,37 @@ def collect_from(pages, **kwargs):
         server.shutdown()
 
 
+FAKE_AXE = (
+    "window.axe = {run: () => Promise.resolve({violations: [{id: 'x', impact: 'serious', tags: ['wcag2a'], description: 'd', "
+    "nodes: [{target: ['p'], html: '<p>'}]}], incomplete: []})};"
+)
+
+
+def test_axe_runs_in_the_protected_session_and_returns_trimmed_results():
+    first_view._axe_source = FAKE_AXE  # kein Netz im Test
+    try:
+        result, _ = collect_from(page("<h1>Websites für Zahnärzte in Mainz</h1><p>Text genug hier für die Seite.</p>"), axe=True)
+    finally:
+        first_view._axe_source = None
+    assert result["status"] == "ok", result
+    v = result["axe"]["violations"][0]
+    assert v["id"] == "x" and v["nodes"] == [{"target": ["p"]}], result["axe"]
+
+
+def test_axe_result_is_none_when_axe_cannot_load():
+    first_view._axe_source = ""  # Hash passte nicht
+    try:
+        result, _ = collect_from(page("<h1>Websites für Zahnärzte in Mainz</h1><p>Text genug hier für die Seite.</p>"), axe=True)
+    finally:
+        first_view._axe_source = None
+    assert result["status"] == "ok" and result.get("axe") is None, result
+
+
+def test_axe_is_absent_unless_requested():
+    result, _ = collect_from(page("<h1>Websites für Zahnärzte in Mainz</h1><p>Text genug hier für die Seite.</p>"))
+    assert "axe" not in result
+
+
 def test_visible_text_in_viewport_is_collected():
     html = (
         "<html><head><title>Praxis-Websites</title><meta name='description' content='Schnell und klar'></head>"

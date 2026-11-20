@@ -99,16 +99,20 @@ def run_audit(
         if name in skip:
             continue
         notify(name, label)
-        results[name] = module.run(url, html, soup, resp_headers)
+        extra = {"url_validator": url_validator} if name == "performance" else {}  # fragt Assets ab, ein öffentlicher Dienst prüft die Ziele
+        results[name] = module.run(url, html, soup, resp_headers, **extra)
 
     # Erster Bildschirm im Browser, einmal gesammelt: Klarheit (nur mit judge) und Lesbarkeit ohne JavaScript (nur mit render_check
     # und vorhandenem ai_visibility). Jede Ausnahme ergibt "nicht beurteilbar" beziehungsweise keinen Befund, der Audit läuft weiter.
     want_clarity = clarity_judge is not None and "clarity" not in skip
     want_render = render_check and "clarity" not in skip and isinstance(results.get("ai_visibility"), dict)
-    if want_clarity or want_render:
-        notify("clarity", "Ersten Eindruck prüfen..." if want_clarity else "Lesbarkeit ohne JavaScript prüfen...")
+    # Mit url_validator (öffentlicher Dienst) läuft axe-core in derselben geschützten Sitzung, ein eigener Browser für a11y wäre ungeprüft.
+    want_axe = "a11y" not in skip and url_validator is not None
+    fv = None
+    if want_clarity or want_render or want_axe:
+        notify("clarity", "Ersten Eindruck prüfen..." if want_clarity else "Seite im Browser prüfen...")
         try:
-            fv = first_view.collect(url, url_validator)
+            fv = first_view.collect(url, url_validator, axe=want_axe)
         except Exception:
             fv = None
         if want_render:
@@ -118,14 +122,14 @@ def run_audit(
                 pass
         if want_clarity:
             try:
-                results["clarity"] = clarity.run(fv, clarity_judge)
+                results["clarity"] = clarity.run({k: v for k, v in fv.items() if k != "axe"} if isinstance(fv, dict) else fv, clarity_judge)
             except Exception:
                 results["clarity"] = {"stage": "nicht_beurteilbar", "reason": "failed", "audience": None, "offer": None}
 
     # a11y last (Playwright)
     if "a11y" not in skip:
         notify("a11y", "Barrierefreiheit prüfen (Playwright)...")
-        results["a11y"] = a11y.run(url, html, soup, resp_headers)
+        results["a11y"] = a11y.run(url, html, soup, resp_headers, axe_results=(fv or {}).get("axe"), own_browser=url_validator is None)
 
     scoring.apply_effort(results)
     results["score"] = scoring.build_score(results, skip)

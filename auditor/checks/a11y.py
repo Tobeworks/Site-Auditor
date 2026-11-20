@@ -16,11 +16,16 @@ async def _run_axe(url: str) -> dict:
         return results
 
 
-def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
+def run(url: str, html: str, soup: BeautifulSoup, headers: dict, axe_results: dict | None = None, own_browser: bool = True) -> dict:
+    """axe_results: Ergebnis aus der geschützten Browsersitzung (first_view). own_browser=False verbietet einen eigenen, ungeschützten
+    Browser (öffentlicher Dienst mit url_validator): Fehlt dann das Ergebnis, ist die Prüfung ein Fehler, kein ungeprüfter Zugriff."""
     try:
         findings = []
 
-        axe_results = asyncio.run(_run_axe(url))
+        if axe_results is None:
+            if not own_browser:
+                raise RuntimeError("Browserprüfung lief nicht")
+            axe_results = asyncio.run(_run_axe(url))
         raw_violations = axe_results.get("violations", [])
         incomplete = axe_results.get("incomplete", [])
 

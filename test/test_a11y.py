@@ -39,6 +39,20 @@ def test_error_path_returns_error_key():
     assert "error" in result
 
 
+def test_prefetched_axe_results_are_used_without_own_browser():
+    html = '<html lang="de"><body><img src="x.jpg" alt="ok"></body></html>'
+    axe = {"violations": [{"id": "color-contrast", "impact": "serious", "tags": ["wcag2aa"], "description": "d", "nodes": [{"target": ["p"]}]}], "incomplete": []}
+    with patch.object(a11y, "_run_axe", side_effect=AssertionError("kein eigener Browser")):
+        result = a11y.run("https://x.de", html, BeautifulSoup(html, "lxml"), {}, axe_results=axe, own_browser=False)
+    assert next(f for f in result["findings"] if f["id"] == "A11-02")["severity"] == "HOCH"
+
+
+def test_missing_axe_results_without_own_browser_is_an_error_not_an_unprotected_visit():
+    with patch.object(a11y, "_run_axe", side_effect=AssertionError("kein eigener Browser")):
+        result = a11y.run("https://x.de", "<html></html>", BeautifulSoup("", "lxml"), {}, axe_results=None, own_browser=False)
+    assert "error" in result
+
+
 if __name__ == "__main__":
     test_images_without_alt_is_mittel()
     test_missing_lang_attribute_is_mittel()

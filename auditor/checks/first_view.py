@@ -4,11 +4,14 @@
 und nicht verdeckt ist und nicht zu einem Einwilligungsbanner gehört. Jede Anfrage des Browsers geht durch
 `url_validator`, damit ein öffentlicher Dienst nicht auf interne Adressen zugreifen lässt. Wirft nie.
 """
+import hashlib
 import multiprocessing
 import threading
 import time
 from typing import Callable
 from urllib.parse import urljoin, urlparse
+
+import httpx
 
 VIEWPORT = {"width": 390, "height": 844}
 MAX_TEXT = 4000
@@ -18,6 +21,22 @@ BLOCKED_TITLES = ("just a moment", "attention required", "access denied", "check
 IDLE_WAIT_MS = 3000
 MAX_REDIRECTS = 5
 REDIRECT_STATUS = (301, 302, 303, 307, 308)
+
+# axe-core für die Barrierefreiheitsprüfung. Wird einmal geladen und gegen den Hash geprüft, dann ohne Netz in die Seite gegeben.
+AXE_URL = "https://cdnjs.cloudflare.com/ajax/libs/axe-core/4.9.1/axe.min.js"
+AXE_SHA256 = "182a40dc5d8207e626c09861ad65027d45e85e3a56d01045d068e2e88ee432ea"
+AXE_TIMEOUT_MS = 10000
+# Nur das, was a11y braucht, damit nicht das ganze DOM durch die Verbindung muss
+_AXE_JS = """
+() => Promise.race([
+  axe.run(),
+  new Promise((_, reject) => setTimeout(() => reject(new Error("axe timeout")), %d)),
+]).then((r) => ({
+  violations: r.violations.map((v) => ({id: v.id, impact: v.impact, tags: v.tags, description: v.description, nodes: v.nodes.map((n) => ({target: n.target}))})),
+  incomplete: r.incomplete.slice(0, 10).map((v) => ({id: v.id, description: v.description})),
+}))
+""" % AXE_TIMEOUT_MS
+_axe_source: str | None = None
 
 _BROWSERS = threading.BoundedSemaphore(2)  # gleichzeitige Browser je Prozess, damit die Gunicorn-Worker den Speicher nicht sprengen
 _WAIT_S = 20  # so lange wartet ein Aufruf auf einen freien Browser
@@ -85,18 +104,32 @@ def _result(status: str, title: str = "", description: str = "", h1: str = "", t
     return {"status": status, "title": title, "description": description, "h1": h1, "text": text}
 
 
-def collect(url: str, url_validator: Callable[[str], bool] | None = None, timeout_s: float = 25) -> dict:
+def _load_axe() -> str | None:
+    """axe-core aus dem Netz holen und nur mit passendem Hash verwenden. None, wenn es nicht klappt (nächster Versuch beim nächsten Aufruf)."""
+    global _axe_source
+    if _axe_source is None:
+        try:
+            r = httpx.get(AXE_URL, timeout=10, follow_redirects=False)
+        except Exception:
+            return None
+        ok = r.status_code == 200 and hashlib.sha256(r.content).hexdigest() == AXE_SHA256
+        _axe_source = r.text if ok else ""
+    return _axe_source or None
+
+
+def collect(url: str, url_validator: Callable[[str], bool] | None = None, timeout_s: float = 25, axe: bool = False) -> dict:
+    """axe=True: führt in derselben geschützten Browsersitzung axe-core aus, Ergebnis unter "axe" (None, wenn es nicht lief)."""
     if not _BROWSERS.acquire(timeout=_WAIT_S):
         return _result("error")
     try:
-        return _collect_isolated(url, url_validator, timeout_s)
+        return _collect_isolated(url, url_validator, timeout_s, _load_axe() if axe else None)
     except Exception:
         return _result("error")
     finally:
         _BROWSERS.release()
 
 
-def _collect_isolated(url: str, url_validator, timeout_s: float) -> dict:
+def _collect_isolated(url: str, url_validator, timeout_s: float, axe_source: str | None = None) -> dict:
     """Läuft in einem eigenen Prozess, der nach Ablauf der Frist hart beendet wird. Eine Seite, die ihren Haupt-Thread blockiert
     (Endlosschleife), lässt page.title() und page.evaluate() sonst ewig warten und hält Browser und Platz im Pool fest.
     Mit dem Prozess endet auch der Playwright-Treiber und damit der Browser.
@@ -106,7 +139,7 @@ def _collect_isolated(url: str, url_validator, timeout_s: float) -> dict:
     wo sie auf macOS nicht zuverlässig ist."""
     ctx = multiprocessing.get_context("fork")
     mine, theirs = ctx.Pipe(duplex=True)
-    proc = ctx.Process(target=_child, args=(theirs, url, url_validator is not None, timeout_s), daemon=True)
+    proc = ctx.Process(target=_child, args=(theirs, url, url_validator is not None, timeout_s, axe_source), daemon=True)
     proc.start()
     theirs.close()
     deadline = time.monotonic() + timeout_s + IDLE_WAIT_MS / 1000 + _GRACE_S
@@ -135,20 +168,20 @@ def _collect_isolated(url: str, url_validator, timeout_s: float) -> dict:
         mine.close()
 
 
-def _child(conn, url, has_validator, timeout_s) -> None:
+def _child(conn, url, has_validator, timeout_s, axe_source=None) -> None:
     def ask(request_url: str) -> bool:
         conn.send(("validate", request_url))
         return bool(conn.recv())
 
     try:
-        result = _collect(url, ask if has_validator else None, timeout_s)
+        result = _collect(url, ask if has_validator else None, timeout_s, axe_source)
     except Exception:
         result = _result("error")
     conn.send(("result", result))
     conn.close()
 
 
-def _collect(url: str, url_validator, timeout_s: float) -> dict:
+def _collect(url: str, url_validator, timeout_s: float, axe_source: str | None = None) -> dict:
     from playwright.sync_api import sync_playwright
 
     state = {"blocked": False, "redirect": None}
@@ -243,6 +276,14 @@ def _collect(url: str, url_validator, timeout_s: float) -> dict:
             if (response and response.status in BLOCKED_STATUS) or any(t in title.lower() for t in BLOCKED_TITLES):
                 return _result("blocked", title=title)
             data = page.evaluate(_COLLECT_JS)
+            axe_results = None
+            if axe_source:
+                try:
+                    # evaluate statt Script-Tag: Eine Content-Security-Policy der Seite blockiert eingefügte Skripte, nicht aber evaluate
+                    page.evaluate(axe_source + "\n;0")
+                    axe_results = page.evaluate(_AXE_JS)
+                except Exception:
+                    axe_results = None
         finally:
             browser.close()
 
@@ -252,4 +293,7 @@ def _collect(url: str, url_validator, timeout_s: float) -> dict:
     # aus dem Overlay. Das ist kein Befund über die Seite, also "kein Text" statt "unklar".
     if data["coveredWords"] >= OVERLAY_MIN_COVERED_WORDS and data["fixedWords"] * 2 >= data["keptWords"]:
         status, text = "empty", ""
-    return _result(status, title=title, description=data["description"], h1=data["h1"], text=text)
+    result = _result(status, title=title, description=data["description"], h1=data["h1"], text=text)
+    if axe_source:
+        result["axe"] = axe_results
+    return result
