@@ -28,7 +28,7 @@ Built primarily for WordPress sites, but works on any URL.
 - `rich` (**optional**, `cli` extra) — terminal output for the CLI only, never imported by the core library
 - `anthropic` (**optional**, `ai` extra) — the plain-language AI summary feature only
 
-The core (`auditor.run_audit`, `auditor.build_report`) has **no** dependency on `rich` or `anthropic` — a pure-library install (`uv add site-auditor` without extras) never imports either.
+The core (`auditor.run_audit`, `auditor.build_report`) has **no** dependency on `rich` or `anthropic` — a pure-library install (without extras) never imports either.
 
 ---
 
@@ -1166,7 +1166,7 @@ site-auditor https://tobeworks.de
 For pure library use (embedding `run_audit`/`build_report` in another project), no extras are required:
 
 ```bash
-uv add site-auditor
+uv add "site-auditor @ git+https://github.com/Tobeworks/Site-Auditor.git@v1.6.1"
 # or, inside another uv project's pyproject.toml, as a path/git dependency during development
 ```
 
@@ -1221,3 +1221,12 @@ If `ANTHROPIC_API_KEY` is not set: the section is skipped, `on_progress("warning
 Order matters in `runner.py`: `content_quality` removes nav/header/footer/script from the shared soup, so every module that reads links or scripts (`contact`, `reviews`, ...) must run before it. `run_audit()` ends with `results["score"]` (see `auditor/scoring.py`).
 
 Copy `.env.example` to `.env` and fill in what you have — `auditor/cli.py` loads `.env` automatically via `python-dotenv`. Library users of `run_audit()`/`build_report()` directly are responsible for loading their own env (dotenv, container env, secrets manager, ...) before calling in.
+
+---
+
+## Commits
+
+- Conventional Commits in **English**, one short line, no body: `feat: ...`, `fix: ...`, `chore: ...`.
+- Short means a handful of words, like the existing history (`fix: validator verdict per scheme and host`). No lists, no explanations, no German.
+- Version bumps are their own commit: `chore: version x.y.z`.
+- Push and tags only when explicitly asked.
