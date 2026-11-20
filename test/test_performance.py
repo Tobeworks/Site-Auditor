@@ -74,6 +74,16 @@ def test_error_path_returns_error_key():
     assert "error" in result
 
 
+def test_validator_blocks_asset_requests_and_redirects_are_not_followed():
+    calls = []
+    with patch("httpx.Client") as mock_client:
+        head = mock_client.return_value.__enter__.return_value.head
+        head.side_effect = lambda u, **kw: calls.append((u, kw)) or MagicMock(status_code=200, headers={})
+        info = performance._collect_asset_head_info(["http://10.0.0.1/a.js", "https://ok.de/b.js"], lambda u: "10.0.0.1" not in u)
+    assert [u for u, _ in calls] == ["https://ok.de/b.js"]
+    assert calls[0][1]["follow_redirects"] is False and len(info) == 1
+
+
 if __name__ == "__main__":
     test_no_compression_is_mittel()
     test_http1_is_mittel_http2_is_positiv()

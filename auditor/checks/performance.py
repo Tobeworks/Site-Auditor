@@ -19,13 +19,17 @@ LIB_PATTERNS = {
 MODERN_IMAGE_EXTS = (".webp", ".avif")
 
 
-def _collect_asset_head_info(urls: list[str]) -> list[dict]:
-    """HEAD-request up to 20 asset URLs, return [{'url','bytes','cache_control','etag'}] for reachable ones."""
+def _collect_asset_head_info(urls: list[str], url_validator=None) -> list[dict]:
+    """HEAD-request up to 20 asset URLs, return [{'url','bytes','cache_control','etag'}] for reachable ones.
+    Mit url_validator (öffentlicher Dienst): nur erlaubte Adressen, Weiterleitungen werden nicht verfolgt, sonst ließe eine Seite
+    über ihre Assets interne Adressen abfragen."""
     info = []
     with httpx.Client(timeout=5, headers={"User-Agent": "Mozilla/5.0"}) as client:
         for u in urls[:20]:
             try:
-                r = client.head(u, follow_redirects=True)
+                if url_validator is not None and not url_validator(u):
+                    continue
+                r = client.head(u, follow_redirects=url_validator is None)
                 if r.status_code < 400:
                     length = r.headers.get("content-length")
                     info.append({
@@ -40,7 +44,7 @@ def _collect_asset_head_info(urls: list[str]) -> list[dict]:
     return info
 
 
-def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
+def run(url: str, html: str, soup: BeautifulSoup, headers: dict, url_validator=None) -> dict:
     try:
         findings = []
         hostname = urlparse(url).netloc
@@ -157,7 +161,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
             if full not in asset_urls:
                 asset_urls.append(full)
 
-        asset_info = _collect_asset_head_info(asset_urls)
+        asset_info = _collect_asset_head_info(asset_urls, url_validator)
         largest_assets = sorted(
             [a for a in asset_info if a["bytes"] is not None],
             key=lambda a: a["bytes"], reverse=True,
@@ -182,7 +186,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
                 break
 
         # Lighthouse
-        lighthouse_available = bool(shutil.which("lighthouse"))
+        lighthouse_available = bool(shutil.which("lighthouse")) and url_validator is None  # Lighthouse öffnet die Adresse ungeprüft, im öffentlichen Dienst nicht
         performance_score = lcp = cls = fcp = tbt = ttfb = speed_index = None
         opportunities = []
 
