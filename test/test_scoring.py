@@ -105,3 +105,13 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
     print("test_scoring: all tests passed")
+
+
+def test_skipped_module_caps_its_category_and_is_listed():
+    from auditor import scoring as sc
+    results = {"seo": {"findings": []}, "security": {"findings": []}}
+    full = sc.build_score(results)
+    assert full["categories"]["Sicherheit & Stack"] == 10.0 and full["partial"] == {}
+    capped = sc.build_score(results, skipped=["hosting", "wordpress_deep", "performance"])
+    assert capped["categories"]["Sicherheit & Stack"] == 9.0 and capped["categories"]["OnPage-SEO"] == 10.0
+    assert capped["partial"] == {"Sicherheit & Stack": ["hosting"]}  # performance hat keine geprüfte Kategorie, wordpress_deep zählt nicht

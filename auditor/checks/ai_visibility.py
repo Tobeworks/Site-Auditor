@@ -15,6 +15,7 @@ from auditor.findings import finding
 # Das Sperren des Trainings ist eine verbreitete, bewusste Entscheidung.
 SEARCH_BOTS = ["OAI-SearchBot", "Claude-SearchBot", "PerplexityBot"]
 USER_BOTS = ["ChatGPT-User", "Claude-User", "Perplexity-User"]
+LOW_TEXT_WORDS = 150  # darunter hat die Seite für KI-Systeme kaum etwas zum Zitieren
 SEARCH_CRAWLERS = SEARCH_BOTS + USER_BOTS  # Grundlage von KIS-01
 TRAINING_CRAWLERS = ["GPTBot", "ClaudeBot", "anthropic-ai", "Google-Extended", "CCBot", "Applebot-Extended"]
 AI_CRAWLERS = SEARCH_CRAWLERS + TRAINING_CRAWLERS
@@ -412,6 +413,19 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
                 "KIS-05", "MITTEL", "Deine Seite hat viel Text, aber keine Zwischenüberschriften (H2)",
                 "KI-Systeme zerlegen Seiten anhand der Überschriften in Abschnitte. Ohne sie lassen sich einzelne Antworten schlecht herausziehen.",
                 solution="Gliedere den Text mit Zwischenüberschriften (H2), am besten als Fragen, die deine Kunden stellen.",
+            ))
+        # Ohne Text gibt es nichts zu zitieren. Mit Text, aber ohne Fragen und Antworten, fehlt die Form, die KI-Systeme übernehmen.
+        if structure["words"] < LOW_TEXT_WORDS:
+            findings.append(finding(
+                "KIS-10", "HOCH", f"Deine Seite hat kaum Text ({structure['words']} Wörter), den KI-Systeme zitieren könnten",
+                "KI-Systeme antworten aus Text. Eine Seite mit wenigen Sätzen gibt ihnen nichts, was sie dir zuordnen oder wiedergeben können.",
+                solution="Beschreibe in eigenen Worten, was du anbietest, für wen und mit welchem Ergebnis, und beantworte die Fragen, die deine Kunden stellen.",
+            ))
+        elif not (structure["question_headings"] or structure["faq"]):
+            findings.append(finding(
+                "KIS-11", "MITTEL", "Deine Seite beantwortet keine Kundenfragen in Frage-Antwort-Form",
+                "Fragen als Überschriften mit direkter Antwort darunter lassen sich von KI-Systemen leicht als Antwort übernehmen. Fehlen sie, wird deine Seite seltener zitiert.",
+                solution="Ergänze einen Abschnitt mit den fünf Fragen, die Kunden am häufigsten stellen, jeweils als Überschrift mit einer knappen Antwort darunter.",
             ))
         gaps = _entity_gaps(nodes)
         if gaps:

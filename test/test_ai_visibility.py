@@ -68,7 +68,7 @@ def test_several_agents_in_one_group_are_all_blocked():
 def test_no_robots_txt_no_finding():
     result = _run(None)
     assert result["blocked_crawlers"] == []
-    assert [f["id"] for f in result["findings"]] == ["KIS-09"]   # ohne robots.txt kein KI-Befund, nur die fehlende llms.txt
+    assert [f["id"] for f in result["findings"]] == ["KIS-09", "KIS-10"]   # ohne robots.txt kein Crawler-Befund, nur fehlende llms.txt und (leere Seite) kaum Text
 
 
 def test_llms_txt_present_is_positive_only():
@@ -387,7 +387,7 @@ def test_question_headings_or_faq_give_positive_kis_08():
 def test_findings_and_result_stay_valid_without_html():
     with patch("httpx.Client", return_value=_client_mock(None, "# llms\n> da\n")):
         result = ai_visibility.run("https://x.de/", "", BeautifulSoup("", "lxml"), {})
-    assert "error" not in result and [f["id"] for f in result["findings"]] == ["KIS-02"]
+    assert "error" not in result and [f["id"] for f in result["findings"]] == ["KIS-02", "KIS-10"]
     assert result["structure"]["words"] == 0 and result["structure"]["lists"] == 0
     assert result["entity"] == {"organization": False, "logo": False, "same_as": 0, "author": None, "date_modified": None}
     assert result["snippets"] == {"restricted": []}
@@ -612,7 +612,31 @@ def test_checklist_last_item_is_an_issue_when_llms_txt_is_missing_and_ok_otherwi
 def test_note_drops_by_half_a_point_without_llms_txt():
     from auditor import scoring
     score = scoring.build_score({"ai_visibility": _llms_run(404)})
-    assert score["categories"]["KI-Bereitschaft"] == 9.5
+    assert [d["points"] for d in score["deductions"] if d["id"] == "KIS-09"] == [0.5]
+
+
+
+
+def _run_html(body):
+    html = f"<html><body>{body}</body></html>"
+    with patch("httpx.Client", return_value=_client_mock()):
+        result = ai_visibility.run("https://x.de/", html, BeautifulSoup(html, "lxml"), {})
+    return {f["id"]: f for f in result["findings"]}
+
+
+def test_page_with_hardly_any_text_is_hoch():
+    f = _run_html("<h1>Hallo</h1><p>Nur ein Satz.</p>")["KIS-10"]
+    assert f["severity"] == "HOCH" and f["solution"] and "kaum Text" in f["finding"]
+
+
+def test_long_text_without_questions_is_mittel():
+    f = _run_html("<h1>Firma</h1><h2>Leistungen</h2><p>" + " ".join(["Wort"] * 200) + "</p>")
+    assert "KIS-10" not in f and f["KIS-11"]["severity"] == "MITTEL"
+
+
+def test_long_text_with_a_question_heading_has_neither():
+    f = _run_html("<h1>Firma</h1><h2>Was kostet das?</h2><p>" + " ".join(["Wort"] * 200) + "</p>")
+    assert "KIS-10" not in f and "KIS-11" not in f and f["KIS-08"]["severity"] == "POSITIV"
 
 
 if __name__ == "__main__":

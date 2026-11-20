@@ -8,6 +8,14 @@ from urllib.parse import urlparse
 from auditor.findings import finding
 
 
+GENERIC_PHRASES = (
+    "ganzheitlich", "maßgeschneidert", "innovative lösungen", "individuelle lösungen", "professionelle lösungen",
+    "ihr partner", "ihr zuverlässiger partner", "ihr kompetenter", "höchste qualität", "höchsten ansprüchen",
+    "kundenorientiert", "von a bis z", "rundum-sorglos", "ganz nach ihren wünschen", "mit leidenschaft",
+    "langjährige erfahrung", "nachhaltige lösungen", "passgenau", "alles aus einer hand",
+)
+
+
 async def _check_images(srcs: list[str]) -> list[dict]:
     broken = []
     semaphore = asyncio.Semaphore(10)
@@ -96,7 +104,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
 
         # CNT-01 Thin Content
         if thin_content:
-            findings.append(finding("CNT-01", "MITTEL", f"Thin Content: nur {word_count} Wörter (Minimum 300 empfohlen)",
+            findings.append(finding("CNT-01", "HOCH" if word_count < 100 else "MITTEL", f"Thin Content: nur {word_count} Wörter (Minimum 300 empfohlen)",
                 "Sehr kurze Seiten liefern Suchmaschinen wenig thematisches Signal und ranken tendenziell schlechter.",
                 solution="Inhalt auf mindestens 300 Wörter erweitern, mit für den Nutzer relevanten Informationen."))
         else:
@@ -145,6 +153,21 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
             else:
                 findings.append(finding("CNT-05", "POSITIV", "404-Seite ist eigenständig gestaltet (Navigation/Branding vorhanden)",
                     "Besucher können von der Fehlerseite aus zurück ins Angebot navigieren."))
+
+        # CNT-06 Konkrete Belege: Zahlen (Kunden, Jahre, Prozent, Preise). Ohne sie bleibt jede Aussage eine Behauptung.
+        figures = len(re.findall(r"\d+", text))
+        if word_count >= 150 and figures < 3:
+            findings.append(finding("CNT-06", "MITTEL", f"Kaum konkrete Zahlen oder Belege im Text (nur {figures})",
+                "Aussagen ohne Zahlen, Referenzen oder Namen sind austauschbar. Besucher und KI-Systeme finden nichts, was sie prüfen oder zitieren können.",
+                solution="Nenne konkrete Belege: Zahl der Kunden oder Projekte, Jahre Erfahrung, ein Ergebnis in Prozent, eine namentliche Referenz."))
+
+        # CNT-07 Floskeln: Formulierungen, die auf jeden Anbieter passen
+        lowered = text.lower()
+        phrases = sorted({p for p in GENERIC_PHRASES if p in lowered})
+        if len(phrases) >= 3:
+            findings.append(finding("CNT-07", "MITTEL", f"Viele Floskeln im Text: {', '.join(phrases[:4])}",
+                "Standardformulierungen, die auf jeden Anbieter passen, sagen nichts über dich. Sie machen die Seite austauschbar, für Menschen wie für KI-Systeme.",
+                solution="Ersetze die Floskeln durch konkrete Aussagen: was genau du für wen löst und woran man das erkennt."))
 
         return {
             "word_count": word_count,

@@ -35,6 +35,23 @@ def test_both_quotes_found_is_klar():
     assert ids(result) == ["KLA-03"] and result["findings"][0]["severity"] == "POSITIV"
 
 
+def test_generic_answers_are_vage_and_cost_points():
+    generic_aud = dict(AUD, specific=False)
+    generic_off = dict(OFF, specific=False)
+    one = clarity.run(FV, judge_of(generic_aud, OFF))
+    assert one["stage"] == "vage" and ids(one) == ["KLA-04"] and one["findings"][0]["severity"] == "MITTEL"
+    both = clarity.run(FV, judge_of(generic_aud, generic_off))
+    assert both["stage"] == "vage" and ids(both) == ["KLA-04"] and both["findings"][0]["severity"] == "HOCH"
+    assert both["findings"][0]["solution"]
+    score = scoring.build_score({"seo": {"findings": []}, "clarity": both})
+    assert score["categories"]["Verständlichkeit"] == 8.5
+
+
+def test_missing_specific_field_counts_as_specific():
+    assert clarity.run(FV, judge_of(AUD, OFF))["stage"] == "klar"
+    assert clarity.run(FV, judge_of(dict(AUD, specific=True), OFF))["stage"] == "klar"
+
+
 def test_one_quote_found_is_teilweise():
     result = clarity.run(FV, judge_of(None, OFF))
     assert result["stage"] == "teilweise" and result["audience"] is None and result["offer"] is not None
@@ -113,7 +130,7 @@ def test_nicht_beurteilbar_does_not_change_the_score():
 
 
 def test_texts_have_no_dashes():
-    for result in (clarity.run(FV, judge_of(None, None)), clarity.run(FV, judge_of(AUD, None)), clarity.run(FV, judge_of(None, OFF)), clarity.run(FV, judge_of(AUD, OFF))):
+    for result in (clarity.run(FV, judge_of(None, None)), clarity.run(FV, judge_of(AUD, None)), clarity.run(FV, judge_of(None, OFF)), clarity.run(FV, judge_of(AUD, OFF)), clarity.run(FV, judge_of(dict(AUD, specific=False), OFF))):
         for f in result["findings"]:
             for field in ("finding", "impact", "solution"):
                 assert "—" not in (f[field] or "") and "–" not in (f[field] or ""), f

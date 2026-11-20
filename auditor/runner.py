@@ -128,7 +128,7 @@ def run_audit(
         results["a11y"] = a11y.run(url, html, soup, resp_headers)
 
     scoring.apply_effort(results)
-    results["score"] = scoring.build_score(results)
+    results["score"] = scoring.build_score(results, skip)
 
     notify("done", "Analyse abgeschlossen")
     return results

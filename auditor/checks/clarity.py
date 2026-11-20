@@ -33,7 +33,8 @@ def _verified(entry, text_norm: str) -> dict | None:
     answer, quote_norm = " ".join(answer.split()), _norm(quote)
     if not answer or len(quote_norm) < MIN_QUOTE or quote_norm not in text_norm:
         return None
-    return {"answer": answer[:MAX_LEN], "quote": " ".join(quote.split())[:MAX_LEN]}
+    # "specific": nennt die Antwort etwas Konkretes (Branche, Größe, Region, Leistung)? Fehlt das Feld (älterer judge), gilt sie als konkret.
+    return {"answer": answer[:MAX_LEN], "quote": " ".join(quote.split())[:MAX_LEN], "specific": entry.get("specific") is not False}
 
 
 def _not_assessable(reason: str) -> dict:
@@ -42,6 +43,14 @@ def _not_assessable(reason: str) -> dict:
 
 def _findings(audience, offer) -> list:
     if audience and offer:
+        vague = [name for name, a in (("für wen dein Angebot ist", audience), ("was du verkaufst", offer)) if not a["specific"]]
+        if vague:
+            return [finding(
+                "KLA-04", "HOCH" if len(vague) == 2 else "MITTEL",
+                f"Auf dem ersten Bildschirm steht zwar etwas, aber zu allgemein: {' und '.join(vague)}.",
+                "Allgemeine Sätze wie Unternehmen, Lösungen oder Unterstützung passen auf jeden Anbieter. Besucher erkennen nicht, ob das Angebot genau zu ihnen passt, und KI-Systeme können dich keiner Anfrage zuordnen.",
+                f"Nenne in der Hauptüberschrift Branche, Größe oder Region der Zielgruppe und eine konkrete Leistung, zum Beispiel: Websites für Zahnarztpraxen in Mainz.",
+            )]
         return [finding(
             "KLA-03", "POSITIV",
             "Auf dem ersten Bildschirm ist erkennbar, für wen dein Angebot ist und was du verkaufst.",
@@ -80,5 +89,6 @@ def run(first_view: dict | None, judge: Callable[[dict], dict | None] | None) ->
     text_norm = _norm(first_view.get("text") or "")
     audience = _verified(answers.get("audience"), text_norm)
     offer = _verified(answers.get("offer"), text_norm)
-    stage = "klar" if audience and offer else "teilweise" if audience or offer else "unklar"
+    both_specific = bool(audience and offer and audience["specific"] and offer["specific"])
+    stage = "klar" if both_specific else "vage" if audience and offer else "teilweise" if audience or offer else "unklar"
     return {"stage": stage, "reason": None, "audience": audience, "offer": offer, "findings": _findings(audience, offer)}

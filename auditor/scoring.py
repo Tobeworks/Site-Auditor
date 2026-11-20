@@ -2,11 +2,17 @@
 Rechnung und Begründung: docs/superpowers/specs/2026-09-02-scoring-roadmap-competitor-design.md (Abschnitte 1 und 2)."""
 from auditor.findings import CATEGORY_MAP, EFFORT_BY_SEVERITY, MODULE_PREFIX
 
+# Eine Kategorie, in der ein Modul bewusst nicht lief, wirkt sonst makellos, obwohl ein Teil fehlt. Sie bekommt höchstens PARTIAL_CAP.
+# wordpress_deep läuft nur bei WordPress-Seiten und clarity hat eine eigene Kategorie, beide zählen hier nicht.
+PARTIAL_CAP = 9.0
+NOT_PARTIAL = {"wordpress_deep", "clarity"}
+
 DEDUCTION = {"KRITISCH": 3, "HOCH": 1.5, "MITTEL": 0.5, "POSITIV": 0}
 SEVERITY_ORDER = {"KRITISCH": 0, "HOCH": 1, "MITTEL": 2}
 FORMULA = (
     "Jede Kategorie startet bei 10 Punkten. Abzug je Befund: kritisch 3, hoch 1,5, mittel 0,5, positive Befunde 0. "
-    "Die Gesamtnote ist der Durchschnitt der geprüften Kategorien. Kategorien ohne geprüftes Modul zählen nicht."
+    "Die Gesamtnote ist der Durchschnitt der geprüften Kategorien. Kategorien ohne geprüftes Modul zählen nicht. "
+    "Wurde ein Teil einer Kategorie nicht geprüft, erreicht sie höchstens 9."
 )
 
 
@@ -35,7 +41,7 @@ def _category(finding_id: str) -> str | None:
     return CATEGORY_MAP.get(finding_id.split("-")[0])
 
 
-def build_score(results: dict) -> dict:
+def build_score(results: dict, skipped=()) -> dict:
     checked = {
         CATEGORY_MAP[MODULE_PREFIX[module]]
         for module, _ in _modules_with_findings(results) if module in MODULE_PREFIX
@@ -48,6 +54,14 @@ def build_score(results: dict) -> dict:
             if category in totals and points:
                 totals[category] = max(0.0, totals[category] - points)
                 deductions.append({"id": f["id"], "category": category, "severity": f["severity"], "points": points})
+    partial: dict[str, list[str]] = {}
+    for module in skipped:
+        prefix = MODULE_PREFIX.get(module)
+        category = CATEGORY_MAP.get(prefix) if prefix else None
+        if module not in NOT_PARTIAL and category in totals:
+            partial.setdefault(category, []).append(module)
+    for category in partial:
+        totals[category] = min(totals[category], PARTIAL_CAP)
     categories = {c: round(v, 1) for c, v in sorted(totals.items())}
     overall = round(sum(categories.values()) / len(categories), 1) if categories else None
 
@@ -61,4 +75,4 @@ def build_score(results: dict) -> dict:
          "effort_days": list(f["effort_days"]) if f.get("effort_days") else None, "timeframe": f.get("timeframe")}
         for _, f in sorted(open_findings(results), key=order)[:3]
     ]
-    return {"categories": categories, "overall": overall, "deductions": deductions, "formula": FORMULA, "first": first}
+    return {"categories": categories, "overall": overall, "deductions": deductions, "formula": FORMULA, "first": first, "partial": partial}
