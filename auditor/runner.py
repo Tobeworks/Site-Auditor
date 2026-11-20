@@ -10,7 +10,7 @@ from auditor.checks import (
     wordpress, wordpress_deep, seo, security, performance,
     broken_links, a11y, structured_data, markup, legal, tech_stack,
     social, hosting, dns, content_quality, ai_visibility, contact, accessibility_static, reviews, google_result,
-    first_view, clarity,
+    first_view, clarity, ux,
 )
 
 OnProgress = Callable[[str, str], None]
@@ -108,8 +108,9 @@ def run_audit(
     want_render = render_check and "clarity" not in skip and isinstance(results.get("ai_visibility"), dict)
     # Mit url_validator (öffentlicher Dienst) läuft axe-core in derselben geschützten Sitzung, ein eigener Browser für a11y wäre ungeprüft.
     want_axe = "a11y" not in skip and url_validator is not None
+    want_mobile = "ux" not in skip
     fv = None
-    if want_clarity or want_render or want_axe:
+    if want_clarity or want_render or want_axe or want_mobile:
         notify("clarity", "Ersten Eindruck prüfen..." if want_clarity else "Seite im Browser prüfen...")
         try:
             fv = first_view.collect(url, url_validator, axe=want_axe)
@@ -125,6 +126,10 @@ def run_audit(
                 results["clarity"] = clarity.run({k: v for k, v in fv.items() if k != "axe"} if isinstance(fv, dict) else fv, clarity_judge)
             except Exception:
                 results["clarity"] = {"stage": "nicht_beurteilbar", "reason": "failed", "audience": None, "offer": None}
+
+    if want_mobile:
+        notify("ux", "Handy-Bedienbarkeit prüfen...")
+        results["ux"] = ux.run(url, html, soup, resp_headers, first_view=fv)
 
     # a11y last (Playwright)
     if "a11y" not in skip:

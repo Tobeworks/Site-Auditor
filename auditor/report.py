@@ -24,6 +24,7 @@ EXTRA_MODULES = [
     ("ai_visibility", "KI-Bereitschaft"),
     ("contact", "Kontaktweg"),
     ("accessibility_static", "Barrierefreiheit (Schnelltest)"),
+    ("ux", "Handy-Bedienbarkeit"),
     ("reviews", "Bewertungen & Testimonials"),
     ("google_result", "Google-Treffer"),
 ]

@@ -1,6 +1,6 @@
 from bs4 import BeautifulSoup
 
-from auditor.findings import finding
+from auditor.findings import finding, severity_by_share
 
 SKIP_INPUT_TYPES = {"hidden", "submit", "button", "image", "reset"}
 
@@ -32,7 +32,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
         without_alt = [i for i in images if i.get("alt") is None]
         if without_alt:
             findings.append(finding(
-                "BAR-02", "MITTEL", f"{len(without_alt)} von {len(images)} Bildern ohne Alt-Text",
+                "BAR-02", severity_by_share(len(without_alt), len(images)), f"{len(without_alt)} von {len(images)} Bildern ohne Alt-Text",
                 "Menschen mit Screenreader erfahren nicht, was auf den Bildern zu sehen ist. Auch Google versteht die Bilder schlechter.",
                 solution='Jedem inhaltlichen Bild einen kurzen alt-Text geben, rein dekorative Bilder mit alt="" markieren.',
             ))
@@ -43,7 +43,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
         unlabeled = [f for f in fields if not _is_labeled(f, label_targets)]
         if unlabeled:
             findings.append(finding(
-                "BAR-03", "MITTEL", f"{len(unlabeled)} Formularfelder ohne Beschriftung",
+                "BAR-03", severity_by_share(len(unlabeled), len(fields)), f"{len(unlabeled)} Formularfelder ohne Beschriftung",
                 "Screenreader können nicht sagen, was in das Feld gehört. Ein Platzhalter allein zählt nicht als Beschriftung.",
                 solution="Jedes Feld mit einem <label for=...> oder aria-label versehen.",
             ))

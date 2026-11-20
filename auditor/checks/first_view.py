@@ -43,6 +43,33 @@ _SETTLE_JS = """
   new Promise((resolve) => setTimeout(resolve, %d)),
 ]).then(() => 0)
 """ % SETTLE_MS
+# Handy-Signale des ersten Bildschirms für das Modul ux: seitliches Scrollen, Weg zum Handeln im Viewport, zu kleine Tippflächen (WCAG 2.5.8: 24 px)
+_MOBILE_JS = """
+() => {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const doc = document.documentElement;
+  const shown = (el) => {
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0 || r.bottom <= 0 || r.top >= vh || r.right <= 0 || r.left >= vw) return null;
+    const s = getComputedStyle(el);
+    return s.display === "none" || s.visibility === "hidden" || parseFloat(s.opacity) === 0 ? null : r;
+  };
+  const action = /anfrage|kontakt|termin|angebot|anruf|beratung|buchen|bestell|kaufen|gespräch|starten|testen|contact|book|call|buy|order|quote|get started|get in touch/i;
+  let targets = 0, small = 0, cta = false;
+  for (const el of document.querySelectorAll("a[href], button, input:not([type=hidden]), select, textarea, [role=button]")) {
+    const r = shown(el);
+    if (!r) continue;
+    targets++;
+    const inline = el.tagName === "A" && getComputedStyle(el).display === "inline";  // Links im Fließtext sind ausgenommen
+    if ((r.width < 24 || r.height < 24) && !inline) small++;
+    const href = (el.getAttribute("href") || "").toLowerCase();
+    if (href.startsWith("tel:") || href.startsWith("mailto:") || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName)
+        || action.test((el.innerText || "") + " " + href)) cta = true;
+  }
+  const clipped = ["hidden", "clip"].includes(getComputedStyle(doc).overflowX) || ["hidden", "clip"].includes(getComputedStyle(document.body).overflowX);
+  return {targets, small, cta, overflowX: doc.scrollWidth > vw + 1 && !clipped, scrollWidth: doc.scrollWidth, width: vw};
+}
+"""
 _axe_source: str | None = None
 
 _BROWSERS = threading.BoundedSemaphore(2)  # gleichzeitige Browser je Prozess, damit die Gunicorn-Worker den Speicher nicht sprengen
@@ -283,13 +310,20 @@ def _collect(url: str, url_validator, timeout_s: float, axe_source: str | None =
             if (response and response.status in BLOCKED_STATUS) or any(t in title.lower() for t in BLOCKED_TITLES):
                 return _result("blocked", title=title)
             data = page.evaluate(_COLLECT_JS)
+            # Einblend-Animationen abwarten, sonst messen axe und die Handy-Signale mitten im Überblenden (falsche Kontraste, unsichtbare Buttons)
+            try:
+                page.evaluate(_SETTLE_JS)
+            except Exception:
+                pass
+            try:
+                mobile = page.evaluate(_MOBILE_JS)
+            except Exception:
+                mobile = None
             axe_results = None
             if axe_source:
                 try:
                     # evaluate statt Script-Tag: Eine Content-Security-Policy der Seite blockiert eingefügte Skripte, nicht aber evaluate
                     page.evaluate(axe_source + "\n;0")
-                    # Einblend-Animationen abwarten, sonst misst axe Farben mitten im Überblenden und meldet Kontrastfehler, die es nicht gibt
-                    page.evaluate(_SETTLE_JS)
                     axe_results = page.evaluate(_AXE_JS)
                 except Exception:
                     axe_results = None
@@ -303,6 +337,7 @@ def _collect(url: str, url_validator, timeout_s: float, axe_source: str | None =
     if data["coveredWords"] >= OVERLAY_MIN_COVERED_WORDS and data["fixedWords"] * 2 >= data["keptWords"]:
         status, text = "empty", ""
     result = _result(status, title=title, description=data["description"], h1=data["h1"], text=text)
+    result["mobile"] = mobile
     if axe_source:
         result["axe"] = axe_results
     return result

@@ -48,7 +48,7 @@ MODULE_PREFIX: dict[str, str] = {
     "seo": "SEO", "structured_data": "SDA", "performance": "PRF", "security": "SEC", "hosting": "HST",
     "social": "SOC", "broken_links": "LNK", "markup": "MKP", "tech_stack": "TCH", "wordpress_deep": "WPD",
     "dns": "DNS", "content_quality": "CNT", "legal": "LGL", "a11y": "A11", "ai_visibility": "KIS",
-    "contact": "KON", "accessibility_static": "BAR", "reviews": "REV", "google_result": "GOO", "clarity": "KLA",
+    "contact": "KON", "accessibility_static": "BAR", "reviews": "REV", "google_result": "GOO", "clarity": "KLA", "ux": "UXF",
 }
 
 # Standard-Aufwandsspanne in Personentagen und Zeithorizont je Schweregrad (Schätzung, kein Angebot).
@@ -81,5 +81,11 @@ CATEGORY_MAP: dict[str, str] = {
     "GOO": "OnPage-SEO",
     "LGL": "Trust & Legal",
     "A11": "UX & Funnel",
+    "UXF": "UX & Funnel",
     "KLA": "Verständlichkeit",
 }
+
+
+def severity_by_share(count: int, total: int, base: str = "MITTEL") -> str:
+    """Ein Mangel an einzelnen Stellen ist ein kleiner Fehler, der halbe Seite betroffen ein großer: ab 3 Stellen und der Hälfte wird HOCH."""
+    return "HOCH" if base == "MITTEL" and count >= 3 and total and count / total >= 0.5 else base

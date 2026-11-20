@@ -1,7 +1,7 @@
 import asyncio
 from bs4 import BeautifulSoup
 
-from auditor.findings import finding
+from auditor.findings import finding, severity_by_share
 
 
 async def _run_axe(url: str) -> dict:
@@ -48,6 +48,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict, axe_results: di
             })
 
         images_without_alt = 0
+        images_total = len(soup.find_all("img"))
         for img in soup.find_all("img"):
             alt = img.get("alt")
             if img.get("role", "") in ("presentation", "none"):
@@ -62,6 +63,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict, axe_results: di
                     images_without_alt += 1
 
         unlabeled_inputs = 0
+        inputs_total = len([i for i in soup.find_all(["input", "select", "textarea"]) if i.get("type") != "hidden"])
         for inp in soup.find_all(["input", "select", "textarea"]):
             if inp.get("type") == "hidden":
                 continue
@@ -105,7 +107,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict, axe_results: di
 
         # A11-02 schwerwiegende WCAG-Verstöße
         if counts["serious"] > 0:
-            findings.append(finding("A11-02", "HOCH", f"{counts['serious']} schwerwiegende Barrierefreiheits-Verstöße",
+            findings.append(finding("A11-02", "KRITISCH" if counts["serious"] >= 3 else "HOCH", f"{counts['serious']} schwerwiegende Barrierefreiheits-Verstöße",
                 "Schwerwiegende Verstöße erschweren die Nutzung für Menschen mit Behinderung erheblich, ohne sie komplett auszuschließen.",
                 solution="Schwerwiegende axe-core-Verstöße beheben, siehe Detail-Report je Regel-ID."))
         else:
@@ -114,7 +116,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict, axe_results: di
 
         # A11-03 Bilder ohne Alt-Text
         if images_without_alt > 0:
-            findings.append(finding("A11-03", "MITTEL", f"{images_without_alt} Bild(er) ohne Alt-Text",
+            findings.append(finding("A11-03", severity_by_share(images_without_alt, images_total), f"{images_without_alt} Bild(er) ohne Alt-Text",
                 "Screenreader können den Bildinhalt nicht wiedergeben — für blinde/sehbehinderte Nutzer nicht zugänglich.",
                 solution='alt-Attribut für jedes Bild ergänzen (leer alt="" nur bei rein dekorativen Bildern).'))
         else:
@@ -123,7 +125,7 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict, axe_results: di
 
         # A11-04 Formularfelder ohne Label
         if unlabeled_inputs > 0:
-            findings.append(finding("A11-04", "MITTEL", f"{unlabeled_inputs} Formularfeld(er) ohne Label",
+            findings.append(finding("A11-04", severity_by_share(unlabeled_inputs, inputs_total), f"{unlabeled_inputs} Formularfeld(er) ohne Label",
                 "Ohne Label wissen Screenreader-Nutzer nicht, wofür ein Eingabefeld gedacht ist.",
                 solution="<label for=\"...\">, aria-label oder aria-labelledby für jedes Formularfeld ergänzen."))
         else:

@@ -85,6 +85,22 @@ def test_axe_is_absent_unless_requested():
     assert "axe" not in result
 
 
+def test_mobile_signals_overflow_cta_and_small_targets():
+    wide = ("<h1>Websites für Zahnärzte in Mainz</h1><p>Text genug hier für die Seite.</p>"
+            "<div style='width:900px;height:10px'></div>"
+            "<a href='/kontakt/' style='display:block;width:100px;height:44px'>Anfrage senden</a>"
+            + "".join(f"<a href='/{i}' style='display:inline-block;width:10px;height:10px'>x</a>" for i in range(4)))
+    result, _ = collect_from(page(wide))
+    m = result["mobile"]
+    assert m["overflowX"] is True and m["cta"] is True and m["small"] == 4 and m["targets"] == 5, m
+
+
+def test_mobile_signals_fit_cta_absent():
+    result, _ = collect_from(page("<meta name='viewport' content='width=device-width'><h1>Websites für Zahnärzte in Mainz</h1><p>Text genug hier für die Seite.</p>"))
+    m = result["mobile"]
+    assert m["overflowX"] is False and m["cta"] is False and m["targets"] == 0, m
+
+
 def test_visible_text_in_viewport_is_collected():
     html = (
         "<html><head><title>Praxis-Websites</title><meta name='description' content='Schnell und klar'></head>"
