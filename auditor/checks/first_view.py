@@ -25,17 +25,24 @@ REDIRECT_STATUS = (301, 302, 303, 307, 308)
 # axe-core für die Barrierefreiheitsprüfung. Wird einmal geladen und gegen den Hash geprüft, dann ohne Netz in die Seite gegeben.
 AXE_URL = "https://cdnjs.cloudflare.com/ajax/libs/axe-core/4.9.1/axe.min.js"
 AXE_SHA256 = "182a40dc5d8207e626c09861ad65027d45e85e3a56d01045d068e2e88ee432ea"
-AXE_TIMEOUT_MS = 10000
+AXE_TIMEOUT_MS = 25000  # auf großen Seiten braucht axe mehrere Sekunden, im Container mehr als lokal
+SETTLE_MS = 3000
 # Nur das, was a11y braucht, damit nicht das ganze DOM durch die Verbindung muss
 _AXE_JS = """
 () => Promise.race([
-  axe.run(),
+  axe.run({resultTypes: ["violations", "incomplete"]}),  // passes und inapplicable bleiben weg, das spart viel Rechenzeit
   new Promise((_, reject) => setTimeout(() => reject(new Error("axe timeout")), %d)),
 ]).then((r) => ({
   violations: r.violations.map((v) => ({id: v.id, impact: v.impact, tags: v.tags, description: v.description, nodes: v.nodes.map((n) => ({target: n.target}))})),
   incomplete: r.incomplete.slice(0, 10).map((v) => ({id: v.id, description: v.description})),
 }))
 """ % AXE_TIMEOUT_MS
+_SETTLE_JS = """
+() => Promise.race([
+  Promise.all(document.getAnimations().filter((a) => a.effect && a.effect.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => {}))),
+  new Promise((resolve) => setTimeout(resolve, %d)),
+]).then(() => 0)
+""" % SETTLE_MS
 _axe_source: str | None = None
 
 _BROWSERS = threading.BoundedSemaphore(2)  # gleichzeitige Browser je Prozess, damit die Gunicorn-Worker den Speicher nicht sprengen
@@ -142,7 +149,7 @@ def _collect_isolated(url: str, url_validator, timeout_s: float, axe_source: str
     proc = ctx.Process(target=_child, args=(theirs, url, url_validator is not None, timeout_s, axe_source), daemon=True)
     proc.start()
     theirs.close()
-    deadline = time.monotonic() + timeout_s + IDLE_WAIT_MS / 1000 + _GRACE_S
+    deadline = time.monotonic() + timeout_s + IDLE_WAIT_MS / 1000 + _GRACE_S + ((AXE_TIMEOUT_MS + SETTLE_MS) / 1000 if axe_source else 0)
     try:
         while True:
             left = deadline - time.monotonic()
@@ -281,6 +288,8 @@ def _collect(url: str, url_validator, timeout_s: float, axe_source: str | None =
                 try:
                     # evaluate statt Script-Tag: Eine Content-Security-Policy der Seite blockiert eingefügte Skripte, nicht aber evaluate
                     page.evaluate(axe_source + "\n;0")
+                    # Einblend-Animationen abwarten, sonst misst axe Farben mitten im Überblenden und meldet Kontrastfehler, die es nicht gibt
+                    page.evaluate(_SETTLE_JS)
                     axe_results = page.evaluate(_AXE_JS)
                 except Exception:
                     axe_results = None
