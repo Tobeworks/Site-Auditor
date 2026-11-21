@@ -234,7 +234,7 @@ CLI flags always override config file values.
 - Every category starts at **10 points**.
 - Each open finding deducts points: **KRITISCH 3**, **HOCH 1.5**, **MITTEL 0.5**. Positive findings deduct nothing. A category never drops below 0.
 - The overall score is the **mean of the checked categories**. Categories without a module that ran do not count.
-- If a module of a category was skipped on purpose (`--skip` / `skip=[...]`), the category is capped at **9** and reported as `partial`, because an unchecked part cannot be assumed fine. `wordpress_deep` is exempt (it only runs on WordPress sites).
+- If a module of a category was skipped on purpose (`--skip` / `skip=[...]`), the category is capped at **9** and reported as `partial`, because an unchecked part cannot be assumed fine. The same cap applies when a browser-based module got no data (blocked page, browser error). `wordpress_deep` is exempt (it only runs on WordPress sites).
 - Counted defects scale with their share: missing alt texts or form labels on at least half of the elements (and three or more) count as HOCH instead of MITTEL, three or more serious axe rules count as KRITISCH.
 - Effort ranges (`effort_days`) are rough estimates per severity, not quotes.
 

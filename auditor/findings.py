@@ -75,13 +75,13 @@ CATEGORY_MAP: dict[str, str] = {
     "DNS": "Technik & Index",
     "CNT": "Content & Sichtbarkeit",
     "KIS": "KI-Bereitschaft",
-    "KON": "UX & Funnel",
-    "BAR": "UX & Funnel",
+    "KON": "Bedienbarkeit",
+    "BAR": "Bedienbarkeit",
     "REV": "Trust & Legal",
     "GOO": "OnPage-SEO",
     "LGL": "Trust & Legal",
-    "A11": "UX & Funnel",
-    "UXF": "UX & Funnel",
+    "A11": "Bedienbarkeit",
+    "UXF": "Bedienbarkeit",
     "KLA": "Verständlichkeit",
 }
 

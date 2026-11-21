@@ -12,7 +12,7 @@ SEVERITY_ORDER = {"KRITISCH": 0, "HOCH": 1, "MITTEL": 2}
 FORMULA = (
     "Jede Kategorie startet bei 10 Punkten. Abzug je Befund: kritisch 3, hoch 1,5, mittel 0,5, positive Befunde 0. "
     "Die Gesamtnote ist der Durchschnitt der geprüften Kategorien. Kategorien ohne geprüftes Modul zählen nicht. "
-    "Wurde ein Teil einer Kategorie nicht geprüft, erreicht sie höchstens 9."
+    "Wurde ein Teil einer Kategorie nicht geprüft oder lieferte der Browser nichts, erreicht sie höchstens 9."
 )
 
 
@@ -55,7 +55,9 @@ def build_score(results: dict, skipped=()) -> dict:
                 totals[category] = max(0.0, totals[category] - points)
                 deductions.append({"id": f["id"], "category": category, "severity": f["severity"], "points": points})
     partial: dict[str, list[str]] = {}
-    for module in skipped:
+    # Ein Modul, das den Browser braucht und nichts bekam (gesperrt, Fehler), hat nichts geprüft und darf keine 10 ergeben.
+    no_data = [m for m, d in results.items() if isinstance(d, dict) and d.get("browser") is False]
+    for module in [*skipped, *no_data]:
         prefix = MODULE_PREFIX.get(module)
         category = CATEGORY_MAP.get(prefix) if prefix else None
         if module not in NOT_PARTIAL and category in totals:

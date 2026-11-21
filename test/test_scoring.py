@@ -37,12 +37,18 @@ def test_category_score_never_drops_below_zero():
 def test_category_without_checked_module_is_not_scored():
     categories = scoring.build_score(_results())["categories"]
     assert "Performance" not in categories      # Modul mit error
-    assert "UX & Funnel" not in categories       # kein Modul gelaufen
+    assert "Bedienbarkeit" not in categories       # kein Modul gelaufen
     assert "Technik & Index" not in categories   # nur die Erkennung 'wordpress' lief, die zählt nicht
 
 
 def test_overall_is_mean_of_scored_categories():
     assert scoring.build_score(_results())["overall"] == 8.3   # (8 + 7 + 10) / 3
+
+
+def test_browser_module_without_data_caps_category():
+    results = {"ux": {"browser": False, "mobile": None, "findings": [_f("UXF-01", "POSITIV")]}}
+    score = scoring.build_score(results)
+    assert score["categories"]["Bedienbarkeit"] == 9.0 and score["partial"] == {"Bedienbarkeit": ["ux"]}
 
 
 def test_no_scored_category_gives_overall_none():

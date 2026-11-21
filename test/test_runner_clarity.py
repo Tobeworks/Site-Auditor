@@ -108,7 +108,7 @@ def test_render_check_without_ai_visibility_does_not_raise_or_collect():
 def test_ux_shares_the_single_browser_collection_with_clarity():
     results, calls = run_ux(judge=lambda fv: JUDGE_ANSWER)
     assert len(calls) == 1 and results["clarity"]["stage"] == "klar" and results["ux"]["browser"] is True
-    assert "UX & Funnel" in results["score"]["categories"]
+    assert "Bedienbarkeit" in results["score"]["categories"]
 
 
 def test_ux_runs_without_browser_data_when_collection_fails():
