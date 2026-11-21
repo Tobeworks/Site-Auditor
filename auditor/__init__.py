@@ -1,4 +1,4 @@
-__version__ = "1.8.0"
+__version__ = "1.8.1"
 
 from auditor.runner import run_audit
 from auditor.report import build as build_report
