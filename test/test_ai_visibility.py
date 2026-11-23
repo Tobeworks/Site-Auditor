@@ -68,7 +68,7 @@ def test_several_agents_in_one_group_are_all_blocked():
 def test_no_robots_txt_no_finding():
     result = _run(None)
     assert result["blocked_crawlers"] == []
-    assert [f["id"] for f in result["findings"]] == ["KIS-09", "KIS-10"]   # ohne robots.txt kein Crawler-Befund, nur fehlende llms.txt und (leere Seite) kaum Text
+    assert [f["id"] for f in result["findings"]] == ["KIS-09", "KIS-10", "KIS-12"]   # ohne robots.txt kein Crawler-Befund, nur fehlende llms.txt und (leere Seite) kaum Text
 
 
 def test_llms_txt_present_is_positive_only():
@@ -387,7 +387,7 @@ def test_question_headings_or_faq_give_positive_kis_08():
 def test_findings_and_result_stay_valid_without_html():
     with patch("httpx.Client", return_value=_client_mock(None, "# llms\n> da\n")):
         result = ai_visibility.run("https://x.de/", "", BeautifulSoup("", "lxml"), {})
-    assert "error" not in result and [f["id"] for f in result["findings"]] == ["KIS-02", "KIS-10"]
+    assert "error" not in result and [f["id"] for f in result["findings"]] == ["KIS-02", "KIS-10", "KIS-12"]
     assert result["structure"]["words"] == 0 and result["structure"]["lists"] == 0
     assert result["entity"] == {"organization": False, "logo": False, "same_as": 0, "author": None, "date_modified": None}
     assert result["snippets"] == {"restricted": []}
@@ -453,7 +453,7 @@ def test_checklist_has_five_entries_in_fixed_order_with_status():
     ai_visibility.apply_render_check(good, _html_with(20), _fv(300))   # baut die Liste neu
     assert _checklist_status(good)["render"] == "issue"
     bad = _analyze(_page("<h1>T</h1>", head='<meta name="robots" content="nosnippet">', words=350))
-    assert _checklist_status(bad) == {"access": "unknown", "render": "unknown", "structure": "issue", "entity": "unknown", "snippets": "issue"}
+    assert _checklist_status(bad) == {"access": "unknown", "render": "unknown", "structure": "issue", "entity": "issue", "snippets": "issue"}
 
 
 def test_checklist_access_follows_crawlers_and_robots():
@@ -644,3 +644,15 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
     print("test_ai_visibility: all tests passed")
+
+
+def test_missing_organization_is_a_high_finding_and_caps_the_score():
+    result = _analyze(_page("<h1>T</h1><h2>Teil</h2>", words=350))
+    assert "KIS-12" in [f["id"] for f in result["findings"] if f["severity"] == "HOCH"]
+    assert result["score_cap"] == ai_visibility.NO_EVIDENCE_CAP
+
+
+def test_complete_entity_with_questions_has_no_cap():
+    complete = {"@context": "https://schema.org", "@graph": [{"@type": "Organization", "name": "M", "url": "https://x.de/", "logo": "l", "sameAs": ["https://a.de"]}]}
+    result = _analyze(_page("<h1>T</h1><h2>Was kostet das?</h2><p>Antwort</p>", head=_ld(complete), words=350))
+    assert "score_cap" not in result and "KIS-12" not in [f["id"] for f in result["findings"]]

@@ -156,6 +156,7 @@ ORG_TYPES = {"Organization", "LocalBusiness", "Corporation", "ProfessionalServic
 ARTICLE_TYPES = {"Article", "BlogPosting", "NewsArticle"}
 SNIPPET_TOKENS = {"nosnippet": "nosnippet", "noai": "noai", "noimageai": "noimageai"}
 TEXT_RESTRICTIONS = {"nosnippet", "max-snippet:0", "noai"}  # noimageai betrifft nur Bilder und steht nur in der Liste
+NO_EVIDENCE_CAP = 7.0  # höchste Note der Kategorie ohne eindeutige Firma und ohne Frage-Antwort-Form
 LONG_PAGE_WORDS = 300
 
 
@@ -299,7 +300,9 @@ def _checklist(result: dict) -> list[dict]:
         entity_item = ("unknown", "Nicht geprüft.")
     else:
         missing = [name for name, ok in (("Firmen-Schema", entity.get("organization")), ("Logo", entity.get("logo")), ("sameAs-Profile", entity.get("same_as"))) if not ok]
-        if "KIS-06" in ids:
+        if "KIS-12" in ids:
+            entity_item = ("issue", "Es steht kein Firmen-Schema im Code.")
+        elif "KIS-06" in ids:
             entity_item = ("issue", "Das Schema ist unvollständig" + (": " + ", ".join(missing) if missing else "") + ".")
         elif not missing:
             entity_item = ("ok", f"Firma, Logo und {entity['same_as']} Profile sind im Schema angegeben.")
@@ -428,6 +431,12 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
                 solution="Ergänze einen Abschnitt mit den fünf Fragen, die Kunden am häufigsten stellen, jeweils als Überschrift mit einer knappen Antwort darunter.",
             ))
         gaps = _entity_gaps(nodes)
+        if not entity["organization"]:
+            findings.append(finding(
+                "KIS-12", "HOCH", "Deine Seite beschreibt deine Firma für KI-Systeme nicht eindeutig: im Code steht kein Firmen-Schema",
+                "KI-Systeme können Aussagen nur dann sicher einer Firma zuordnen, wenn Name, Logo und Profile maschinenlesbar angegeben sind. Ohne das wirst du seltener genannt.",
+                solution="Ergänze im Code der Startseite ein Schema vom Typ Organization oder LocalBusiness mit Name, Logo, Kontakt und sameAs-Profilen (zum Beispiel LinkedIn).",
+            ))
         if gaps:
             findings.append(finding(
                 "KIS-06", "MITTEL", f"Deine Firma ist im Schema nicht vollständig beschrieben, es fehlt: {', '.join(gaps)}",
@@ -451,6 +460,10 @@ def run(url: str, html: str, soup: BeautifulSoup, headers: dict) -> dict:
                   "entity": entity, "snippets": {"restricted": restricted},
                   "render": {"status": "unknown", "html_words": None, "rendered_words": None},
                   "bot_html_words": bot_words or None, "findings": findings}
+        # Bereit heißt nicht nur "nicht gesperrt": ohne eindeutige Firma und ohne Fragen und Antworten gibt es keinen Beleg dafür.
+        evidence = bool(entity["organization"] and entity["logo"] and entity["same_as"] and (structure["question_headings"] or structure["faq"]))
+        if not evidence:
+            result["score_cap"] = NO_EVIDENCE_CAP
         result["checklist"] = _checklist(result)
         return result
     except Exception as e:

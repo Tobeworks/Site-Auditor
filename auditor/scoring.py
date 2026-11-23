@@ -12,7 +12,8 @@ SEVERITY_ORDER = {"KRITISCH": 0, "HOCH": 1, "MITTEL": 2}
 FORMULA = (
     "Jede Kategorie startet bei 10 Punkten. Abzug je Befund: kritisch 3, hoch 1,5, mittel 0,5, positive Befunde 0. "
     "Die Gesamtnote ist der Durchschnitt der geprüften Kategorien. Kategorien ohne geprüftes Modul zählen nicht. "
-    "Wurde ein Teil einer Kategorie nicht geprüft oder lieferte der Browser nichts, erreicht sie höchstens 9."
+    "Wurde ein Teil einer Kategorie nicht geprüft oder lieferte der Browser nichts, erreicht sie höchstens 9. "
+    "Die KI-Bereitschaft erreicht höchstens 7, solange die Firma nicht eindeutig beschrieben ist oder Fragen und Antworten fehlen."
 )
 
 
@@ -64,6 +65,12 @@ def build_score(results: dict, skipped=()) -> dict:
             partial.setdefault(category, []).append(module)
     for category in partial:
         totals[category] = min(totals[category], PARTIAL_CAP)
+    # Ein Modul kann seine Kategorie deckeln, wenn der Beleg für "in Ordnung" fehlt (zum Beispiel KI-Bereitschaft ohne Firmen-Schema).
+    for module, data in results.items():
+        cap, prefix = data.get("score_cap") if isinstance(data, dict) else None, MODULE_PREFIX.get(module)
+        category = CATEGORY_MAP.get(prefix) if prefix else None
+        if cap is not None and category in totals:
+            totals[category] = min(totals[category], cap)
     categories = {c: round(v, 1) for c, v in sorted(totals.items())}
     overall = round(sum(categories.values()) / len(categories), 1) if categories else None
 

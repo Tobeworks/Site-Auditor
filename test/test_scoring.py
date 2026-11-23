@@ -121,3 +121,8 @@ def test_skipped_module_caps_its_category_and_is_listed():
     capped = sc.build_score(results, skipped=["hosting", "wordpress_deep", "performance"])
     assert capped["categories"]["Sicherheit & Stack"] == 9.0 and capped["categories"]["OnPage-SEO"] == 10.0
     assert capped["partial"] == {"Sicherheit & Stack": ["hosting"]}  # performance hat keine geprüfte Kategorie, wordpress_deep zählt nicht
+
+
+def test_module_score_cap_limits_its_category():
+    results = {"ai_visibility": {"findings": [], "score_cap": 7.0}}
+    assert scoring.build_score(results)["categories"]["KI-Bereitschaft"] == 7.0
